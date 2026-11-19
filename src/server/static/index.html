@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tra Cứu Hồ Sơ Giấy Phép Lái Xe - Mạng LAN</title>
+  <style>
+    :root {
+      --primary: #1E3A8A;
+      --primary-light: #2563EB;
+      --primary-dark: #1E293B;
+      --accent: #10B981;
+      --accent-hover: #059669;
+      --bg-body: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text-main: #0F172A;
+      --text-muted: #64748B;
+      --border: #E2E8F0;
+      --border-focus: #3B82F6;
+      --tag-bg: #EFF6FF;
+      --tag-text: #1D4ED8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-body);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Navigation Bar */
+    header {
+      background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+      color: #FFFFFF;
+      padding: 16px 24px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .header-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      background: rgba(255, 255, 255, 0.15);
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .brand-title h1 {
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-title p {
+      font-size: 12px;
+      color: #CBD5E1;
+      margin-top: 2px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #34D399;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #34D399;
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Search Card */
+    .search-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+    }
+
+    .search-form {
+      display: grid;
+      grid-template-columns: 1fr 220px 120px 100px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    @media (max-width: 900px) {
+      .search-form {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .input-group {
+      position: relative;
+    }
+
+    .input-field {
+      width: 100%;
+      height: 44px;
+      padding: 0 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .input-field:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    }
+
+    select.input-field {
+      cursor: pointer;
+      background-color: #fff;
+    }
+
+    .btn {
+      height: 44px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.15s, transform 0.05s;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-primary {
+      background-color: var(--primary-light);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background-color: var(--primary);
+    }
+
+    .btn-secondary {
+      background-color: #F1F5F9;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      background-color: #E2E8F0;
+      color: var(--text-main);
+    }
+
+    /* Stats Quick Bar */
+    .quick-stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .stat-chip {
+      background: #F1F5F9;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .stat-chip strong {
+      color: var(--primary-dark);
+    }
+
+    /* Results Card */
+    .results-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .results-header {
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: #FAFBFD;
+    }
+
+    .results-header h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .latency-pill {
+      font-size: 12px;
+      color: var(--text-muted);
+      background: #E2E8F0;
+      padding: 3px 8px;
+      border-radius: 12px;
+    }
+
+    .table-container {
+      overflow-x: auto;
+      max-height: calc(100vh - 350px);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13.5px;
+    }
+
+    th {
+      background-color: #F1F5F9;
+      color: #475569;
+      font-weight: 600;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tr:hover td {
+      background-color: #F8FAFC;
+    }
+
+    .license-badge {
+      display: inline-block;
+      background-color: var(--tag-bg);
+      color: var(--tag-text);
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+    }
+
+    .action-btn {
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      text-decoration: none;
+    }
+
+    .btn-view-pdf {
+      background-color: #EFF6FF;
+      color: #1D4ED8;
+      border: 1px solid #BFDBFE;
+    }
+    .btn-view-pdf:hover {
+      background-color: #DBEAFE;
+    }
+
+    .btn-dl-excel {
+      background-color: #ECFDF5;
+      color: #047857;
+      border: 1px solid #A7F3D0;
+    }
+    .btn-dl-excel:hover {
+      background-color: #D1FAE5;
+    }
+
+    .empty-state {
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .empty-state-icon {
+      font-size: 40px;
+      margin-bottom: 8px;
+    }
+
+    /* Modal PDF Viewer */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.65);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-content {
+      background: #FFFFFF;
+      width: 90vw;
+      height: 90vh;
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    .modal-header {
+      padding: 12px 20px;
+      background: var(--primary-dark);
+      color: #FFF;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .modal-close-btn {
+      background: transparent;
+      border: none;
+      color: #FFF;
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .modal-body {
+      flex: 1;
+      background: #525659;
+    }
+
+    .modal-body iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header>
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">🚗</div>
+        <div class="brand-title">
+          <h1>HỆ THỐNG TRA CỨU HỒ SƠ GIẤY PHÉP LÁI XE</h1>
+          <p>Phân hệ Tra cứu Mạng Nội Bộ (LAN Client) - Sổ gốc cấp GPLX cơ giới đường bộ</p>
+        </div>
+      </div>
+      <div class="status-badge" id="lanStatusBadge">
+        <div class="pulse-dot"></div>
+        <span id="lanUrlText">Đang kết nối máy chủ...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+    <!-- Search Box Card -->
+    <div class="search-card">
+      <form class="search-form" id="searchForm" onsubmit="handleSearch(event)">
+        <div class="input-group">
+          <input
+            type="text"
+            id="searchInput"
+            class="input-field"
+            placeholder="🔍 Nhập Họ và tên (có/không dấu), Số bằng GPLX, hoặc Năm sinh..."
+            autofocus
+          />
+        </div>
+
+        <div class="input-group">
+          <select id="provinceSelect" class="input-field">
+            <option value="all">🌐 Tất cả các tỉnh / thành</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary">
+          🔍 Tìm kiếm
+        </button>
+
+        <button type="button" class="btn btn-secondary" onclick="resetSearch()">
+          ✕ Xóa
+        </button>
+      </form>
+
+      <!-- Quick statistics -->
+      <div class="quick-stats">
+        <div class="stat-chip">Tổng số sổ đã số hóa: <strong id="statDossiers">0</strong></div>
+        <div class="stat-chip">Tổng số công dân: <strong id="statCitizens">0</strong></div>
+        <div class="stat-chip">Thời gian phản hồi CSDL: <strong id="statLatency">0 ms</strong></div>
+      </div>
+    </div>
+
+    <!-- Results Card -->
+    <div class="results-card">
+      <div class="results-header">
+        <h2>DANH SÁCH KẾT QUẢ TÌM KIẾM (<span id="resultCount">0</span> kết quả)</h2>
+        <span class="latency-pill" id="latencyPill">Sẵn sàng</span>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50px; text-align: center;">STT</th>
+              <th>Họ và Tên</th>
+              <th style="width: 80px; text-align: center;">Năm sinh</th>
+              <th>Nơi cư trú</th>
+              <th style="width: 110px; text-align: center;">Số bằng GPLX</th>
+              <th style="width: 70px; text-align: center;">Hạng</th>
+              <th style="width: 120px;">Vị trí lưu trữ</th>
+              <th style="width: 80px; text-align: center;">Trang PDF</th>
+              <th style="width: 180px; text-align: center;">Thao tác</th>
+            </tr>
+          </thead>
+          <tbody id="resultsTableBody">
+            <tr>
+              <td colspan="9">
+                <div class="empty-state">
+                  <div class="empty-state-icon">📋</div>
+                  <p>Nhập từ khóa và bấm <strong>Tìm kiếm</strong> để tra cứu hồ sơ người lái xe.</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Modal PDF Viewer -->
+  <div class="modal-overlay" id="pdfModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalPdfTitle">Xem Hồ Sơ Scan PDF Gốc</h3>
+        <button class="modal-close-btn" onclick="closePdfModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <iframe id="pdfIframe" src="about:blank"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let debounceTimer = null;
+
+    // Load server status & provinces on page load
+    window.addEventListener("DOMContentLoaded", () => {
+      fetchStatus();
+      fetchProvinces();
+      // Auto search on initial load
+      performSearch("");
+
+      // Debounce search as user types
+      document.getElementById("searchInput").addEventListener("input", (e) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          performSearch(e.target.value);
+        }, 350);
+      });
+
+      document.getElementById("provinceSelect").addEventListener("change", () => {
+        performSearch(document.getElementById("searchInput").value);
+      });
+    });
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch("/api/status");
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById("lanUrlText").textContent = `🟢 Máy chủ: ${data.url}`;
+          document.getElementById("statDossiers").textContent = data.stats.total_dossiers || 0;
+          document.getElementById("statCitizens").textContent = data.stats.total_citizens || 0;
+        }
+      } catch (err) {
+        document.getElementById("lanUrlText").textContent = "🔴 Mất kết nối máy chủ";
+      }
+    }
+
+    async function fetchProvinces() {
+      try {
+        const res = await fetch("/api/provinces");
+        if (res.ok) {
+          const data = await res.json();
+          const select = document.getElementById("provinceSelect");
+          data.provinces.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p.code;
+            opt.textContent = `${p.code} - ${p.name}`;
+            select.appendChild(opt);
+          });
+        }
+      } catch (e) {
+        console.error("Lỗi tải danh mục tỉnh:", e);
+      }
+    }
+
+    function handleSearch(event) {
+      if (event) event.preventDefault();
+      const q = document.getElementById("searchInput").value;
+      performSearch(q);
+    }
+
+    function resetSearch() {
+      document.getElementById("searchInput").value = "";
+      document.getElementById("provinceSelect").value = "all";
+      performSearch("");
+    }
+
+    async function performSearch(query) {
+      const province = document.getElementById("provinceSelect").value;
+      const pill = document.getElementById("latencyPill");
+      pill.textContent = "Đang tìm...";
+
+      try {
+        const params = new URLSearchParams({
+          q: query.trim(),
+          province: province,
+          limit: 100
+        });
+        const res = await fetch(`/api/search?${params}`);
+        if (!res.ok) throw new Error("HTTP error " + res.status);
+        const data = await res.json();
+
+        document.getElementById("resultCount").textContent = data.total;
+        document.getElementById("statLatency").textContent = `${data.latency_ms} ms`;
+        pill.textContent = `Hoàn tất trong ${data.latency_ms} ms`;
+
+        renderTable(data.results);
+      } catch (err) {
+        pill.textContent = "Lỗi kết nối";
+        console.error(err);
+      }
+    }
+
+    function renderTable(rows) {
+      const tbody = document.getElementById("resultsTableBody");
+      tbody.innerHTML = "";
+
+      if (!rows || rows.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="9">
+              <div class="empty-state">
+                <div class="empty-state-icon">🔍</div>
+                <p>Không tìm thấy hồ sơ công dân nào phù hợp với từ khóa.</p>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      rows.forEach((row, idx) => {
+        const tr = document.createElement("tr");
+
+        const boxInfo = (row.box && row.box_number) 
+          ? `HỘP ${row.box} - H.SỐ ${row.box_number}`
+          : (row.box ? `HỘP ${row.box}` : "-");
+
+        tr.innerHTML = `
+          <td style="text-align: center; font-weight: 600; color: #64748B;">${row.stt || (idx + 1)}</td>
+          <td style="font-weight: 700; color: #1E293B;">${escapeHtml(row.full_name || "")}</td>
+          <td style="text-align: center;">${escapeHtml(row.birth_year || "")}</td>
+          <td style="color: #334155;">${escapeHtml(row.address || "")}</td>
+          <td style="text-align: center;">
+            <span class="license-badge">${escapeHtml(row.license_number || "")}</span>
+          </td>
+          <td style="text-align: center;">${escapeHtml(row.license_class || "A1")}</td>
+          <td style="font-size: 12.5px; color: #475569;">${boxInfo}</td>
+          <td style="text-align: center; font-weight: 600; color: #2563EB;">Trang ${row.page_number || 1}</td>
+          <td style="text-align: center; white-space: nowrap;">
+            <button class="action-btn btn-view-pdf" onclick="openPdfModal('${encodeURIComponent(row.pdf_path || '')}', ${row.page_number || 1}, '${escapeHtml(row.full_name || '')}')">
+              👁️ Xem Trang ${row.page_number || 1}
+            </button>
+            <a class="action-btn btn-dl-excel" href="/api/excel?path=${encodeURIComponent(row.excel_path || '')}" download>
+              📊 Tải Excel
+            </a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function openPdfModal(encodedPdfPath, pageNumber, citizenName) {
+      const modal = document.getElementById("pdfModal");
+      const iframe = document.getElementById("pdfIframe");
+      const title = document.getElementById("modalPdfTitle");
+
+      title.textContent = `Hồ Sơ: ${citizenName} - Đang xem Trang ${pageNumber}`;
+      iframe.src = `/api/pdf?path=${encodedPdfPath}#page=${pageNumber}`;
+      modal.classList.add("active");
+    }
+
+    function closePdfModal() {
+      const modal = document.getElementById("pdfModal");
+      const iframe = document.getElementById("pdfIframe");
+      iframe.src = "about:blank";
+      modal.classList.remove("active");
+    }
+
+    // Close modal on Escape key
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closePdfModal();
+    });
+
+    function escapeHtml(text) {
+      if (!text) return "";
+      return text.toString()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+  </script>
+</body>
+</html>

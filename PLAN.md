@@ -97,16 +97,27 @@ flowchart LR
 
 ---
 
-### Giai đoạn 4: Tính năng Chia sẻ Mạng LAN Đa Máy (Phase 4: Multi-PC LAN Server)
+### Giai đoạn 4: Tính năng Chia sẻ Mạng LAN Đa Máy (Phase 4: Multi-PC LAN Server) - ĐÃ HOÀN THÀNH ✅
 - **Mục tiêu**: Cho phép nhiều máy tính trong cùng phòng làm việc cùng tra cứu dữ liệu từ một ổ SSD cắm ở máy chính.
 - **Các nhiệm vụ cụ thể**:
-  - [ ] Cấu hình Backend FastAPI hỗ trợ lắng nghe trên toàn bộ giao diện mạng nội bộ (`0.0.0.0:8080`).
-  - [ ] Xây dựng giao diện Web Client (bản rút gọn chạy trên trình duyệt web Chrome/Edge dành cho các máy phụ).
-  - [ ] Bổ sung nút gạt trên giao diện Desktop máy chính: `Bật / Tắt chia sẻ mạng nội bộ`.
-  - [ ] Tự động lấy IP máy chính trong mạng LAN (VD: `192.168.1.25:8080`) và hiển thị mã QR trên màn hình để nhân viên khác kết nối.
-  - [ ] Cơ chế stream file PDF qua mạng LAN an toàn, mượt mà khi nhiều máy cùng mở file cùng lúc.
+  - [x] Cấu hình Backend FastAPI hỗ trợ lắng nghe trên toàn bộ giao diện mạng nội bộ (`0.0.0.0:8080`) (`src/server/lan_server.py`).
+  - [x] Xây dựng giao diện Web Client hiện đại, thuần CSS/JS chạy 100% offline không cần internet (`src/server/static/index.html`):
+    - [x] Ô tìm kiếm tự động lọc debounce theo Họ tên, Số bằng, Năm sinh.
+    - [x] Bộ lọc theo Tỉnh / Thành phố.
+    - [x] Bảng hiển thị kết quả trực quan, có badge số bằng nổi bật.
+    - [x] Trình xem PDF nhúng (Modal Viewer) hỗ trợ nhảy thẳng đến trang của công dân (`#page=X`).
+    - [x] Nút tải file Excel đồng hành về máy phụ.
+  - [x] Xây dựng màn hình quản trị LAN trên giao diện Desktop (`src/gui/lan_screen.py` & Tab 3 trong `src/gui/app.py`):
+    - [x] Nút bấm lớn `Bật / Tắt chia sẻ mạng LAN`.
+    - [x] Tự động hiển thị IP máy chính (LAN IP: `192.168.x.x`), cổng (Port 8080) và đường dẫn truy cập đầy đủ.
+    - [x] Nút `📋 Sao chép địa chỉ Web` và `🌐 Mở trên Trình duyệt`.
+    - [x] Mã QR Code tự động sinh (`qrcode`) hiển thị trực tiếp trên giao diện để kết nối tức thì qua điện thoại / tablet.
+    - [x] Bảng thống kê dữ liệu trực tiếp: Tổng số cuốn sổ, số công dân, trạng thái CSDL.
+  - [x] Tự động lấy IP máy chính trong mạng LAN thông qua socket interface (`get_lan_ip()`).
+  - [x] Cơ chế stream file PDF và tải file Excel qua mạng LAN an toàn (`/api/pdf`, `/api/excel`) với MIME headers chuẩn và hỗ trợ range requests.
+  - [x] Viết script kiểm thử tự động `test_phase4.py` kiểm chứng 100% server, web client, các API và sinh mã QR.
 - **Sản phẩm đầu ra (Deliverables)**:
-  - Máy chính cắm ổ SSD mở app; máy phụ chỉ cần mở Chrome gõ địa chỉ IP là tìm kiếm và xem PDF bình thường.
+  - Máy chính cắm ổ SSD mở app bật chia sẻ LAN; các máy phụ trong cùng văn phòng chỉ cần mở Chrome / Edge gõ IP hoặc quét mã QR là tra cứu và xem PDF bình thường không cần cài đặt.
 
 ---
 

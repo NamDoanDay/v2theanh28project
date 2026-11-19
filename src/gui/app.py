@@ -15,6 +15,7 @@ from src.gui.batch_queue import BatchQueueFrame
 from src.gui.pdf_viewer import PDFViewerFrame
 from src.gui.review_panel import ReviewPanel
 from src.gui.search_screen import SearchScreenFrame
+from src.gui.lan_screen import LANScreenFrame
 from src.pipeline import process_dossier_pdf, commit_dossier
 from src.config import DEFAULT_OUTPUT_DIR
 
@@ -35,6 +36,9 @@ class GPLXApp(ctk.CTk):
 
         self._build_layout()
 
+        # Handle window close to shutdown LAN server gracefully
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
         # Default to Full Screen (Maximized window) on startup
         try:
             self.after(100, lambda: self.state("zoomed"))
@@ -48,9 +52,15 @@ class GPLXApp(ctk.CTk):
 
         self.tab_ingest = self.tabview.add("📥 SỐ HÓA & ĐỔI TÊN HỒ SƠ")
         self.tab_search = self.tabview.add("🔍 TRA CỨU HỒ SƠ & MỞ FILE SCAN")
+        self.tab_lan = self.tabview.add("🌐 CHIA SẺ MẠNG LAN (MÁY CHỦ NỘI BỘ)")
 
         self._build_ingest_tab()
         self._build_search_tab()
+        self._build_lan_tab()
+
+    def _build_lan_tab(self):
+        self.lan_screen = LANScreenFrame(self.tab_lan)
+        self.lan_screen.pack(fill="both", expand=True)
 
     def _build_ingest_tab(self):
         # 3-column split layout using PanedWindow for draggable resizing
@@ -192,8 +202,10 @@ class GPLXApp(ctk.CTk):
             # Update sidebar status
             self.sidebar.update_item_status(original_path, "COMPLETED")
 
-            # Refresh search screen stats
+            # Refresh search screen stats & LAN screen stats
             self.search_screen.refresh_stats()
+            if hasattr(self, "lan_screen"):
+                self.lan_screen.refresh_state()
 
             # Notification
             msg = (
@@ -218,3 +230,13 @@ class GPLXApp(ctk.CTk):
             if item["status"] in ["READY", "PENDING"]:
                 self.on_file_selected(item["path"])
                 break
+
+    def on_close(self):
+        """Gracefully stops LAN server and terminates GUI."""
+        try:
+            from src.server.lan_server import lan_server
+            if lan_server.is_running:
+                lan_server.stop()
+        except Exception:
+            pass
+        self.destroy()

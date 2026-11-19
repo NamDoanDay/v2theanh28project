@@ -183,11 +183,20 @@ flowchart LR
   - Nút `Mở thư mục chứa file` trong Windows Explorer.
 
 ### 5.3. Phân hệ Quản trị & Chia sẻ Mạng LAN (Module Administration & LAN Sharing)
-- **F-301 (Zero-Config Portable)**: Toàn bộ cấu hình và file CSDL `gplx_data.db` nằm ngay trong thư mục ứng dụng hoặc thư mục gốc của ổ SSD. Không yêu cầu cấu hình cổng kết nối, mật khẩu CSDL phức tạp.
+- **F-301 (Zero-Config Portable)**: Toàn bộ cấu hình và file CSDL `gplx_index.db` nằm ngay trong thư mục `HeThong/` trên ổ SSD. Không yêu cầu cấu hình cổng kết nối, mật khẩu CSDL phức tạp.
 - **F-302 (Bật/Tắt chia sẻ Mạng LAN - 1-Click LAN Server)**:
-  - Trên máy tính cắm ổ SSD, có nút gạt: `Bật chia sẻ mạng nội bộ`.
-  - Hiển thị địa chỉ truy cập nội bộ (Ví dụ: `http://192.168.1.15:8080`) kèm mã QR để máy khác trong phòng chỉ việc mở trình duyệt web lên tra cứu mà không cần cài phần mềm.
-- **F-303 (Sao lưu & Đồng bộ)**:
+  - Trên máy tính cắm ổ SSD (máy chủ), có giao diện quản trị Tab `🌐 Chia Sẻ Mạng LAN`:
+    - Nút bấm `Bật / Tắt chia sẻ mạng LAN`.
+    - Tự động phát hiện IP máy chính (Ví dụ: `192.168.1.15:8080`), hỗ trợ tùy biến cổng (Port).
+    - Hiển thị mã QR Code tự động sinh để nhân viên khác dùng điện thoại / tablet hoặc laptop phụ quét kết nối ngay lập tức.
+    - Nút bấm `📋 Sao chép địa chỉ` và `🌐 Mở trên Trình duyệt`.
+- **F-303 (Phân hệ Web Client Mạng LAN dành cho Máy phụ)**:
+  - Chạy trực tiếp trên trình duyệt Google Chrome, Microsoft Edge mà không cần cài đặt bất kỳ phần mềm nào trên máy phụ.
+  - Thiết kế thuần CSS/JS hoạt động 100% offline, không cần internet.
+  - Ô tìm kiếm thông minh tự động lọc tức thì theo Họ tên, Số bằng, Năm sinh; bộ lọc theo Tỉnh.
+  - Bảng kết quả trực quan, tích hợp **Trình xem PDF nhúng (Modal Viewer)** tự động mở và nhảy đến chính xác trang của công dân (`#page=X`).
+  - Nút tải trực tiếp file Excel con tương ứng về máy phụ qua mạng nội bộ.
+- **F-304 (Sao lưu & Đồng bộ)**:
   - Chức năng `Quét lại dữ liệu từ Excel` (Re-index): Nếu người dùng chỉnh sửa trực tiếp file Excel bằng Microsoft Excel ngoài desktop, bấm nút này hệ thống sẽ tự động cập nhật lại vào CSDL SQLite.
 
 ---

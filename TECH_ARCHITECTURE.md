@@ -181,22 +181,47 @@ CREATE VIRTUAL TABLE IF NOT EXISTS citizens_fts USING fts5(
 
 ## 5. MÔ HÌNH CHIA SẺ MẠNG NỘI BỘ (HYBRID LAN SERVER)
 
+```mermaid
+flowchart TD
+    subgraph Host["MÁY CHỦ CHÍNH (CẮM Ổ SSD)"]
+        App["Ứng Dụng Desktop (CustomTkinter)"]
+        LanScreen["Tab 3: Quản trị Chia sẻ LAN (lan_screen.py)"]
+        Server["FastAPI + Uvicorn Async Server (lan_server.py)"]
+        DB[(CSDL SQLite + FTS5)]
+        SSD[Kho Lưu Trữ File PDF & Excel]
+
+        App --> LanScreen
+        LanScreen -->|Bật / Tắt Server & QR Code| Server
+        Server -->|Query siêu tốc < 1ms| DB
+        Server -->|Stream File PDF & Excel| SSD
+    end
+
+    subgraph Clients["CÁC MÁY TRẠM PHỤ TRONG PHÒNG (MẠNG LAN)"]
+        PC1["Máy phụ 1 (Chrome / Edge)"]
+        PC2["Máy phụ 2 (Chrome / Edge)"]
+        Mobile["Điện thoại / Tablet (Quét mã QR)"]
+    end
+
+    Server <==>|HTTP :8080| PC1
+    Server <==>|HTTP :8080| PC2
+    Server <==>|HTTP :8080| Mobile
+```
+
 1. **Trên Máy Chủ (Máy cắm ổ SSD):**
-   - Chạy ứng dụng Desktop.
-   - Nhấn nút **"Bật chia sẻ mạng nội bộ"**:
-     - Python FastAPI tự động bind vào IP LAN của máy (ví dụ: `0.0.0.0:8080`).
-     - Giao diện Desktop hiển thị:
-       - Trạng thái: `Đang chia sẻ` (Chấm xanh).
-       - Địa chỉ truy cập: `http://192.168.1.15:8080`.
-       - Nút `Sao chép đường dẫn` và `Hiện mã QR`.
-2. **Trên Các Máy Trạm (Máy của nhân viên khác):**
-   - Không cần cài bất cứ phần mềm nào.
-   - Chỉ cần mở trình duyệt web (Google Chrome / Microsoft Edge / Cốc Cốc) và gõ `http://192.168.1.15:8080`.
-   - Giao diện Web Client tải về nhẹ nhàng, cho phép:
-     - Nhập số bằng / tên để tìm kiếm.
-     - Xem danh sách kết quả.
-     - Bấm xem trực tiếp file PDF (stream trực tiếp từ máy chủ).
-     - Tải file Excel hoặc in ấn từ xa.
+   - Chạy ứng dụng Desktop, vào Tab **"🌐 CHIA SẺ MẠNG LAN"**.
+   - Bấm nút **"▶ BẬT CHIA SẺ MẠNG LAN"**:
+     - Python FastAPI (`src/server/lan_server.py`) khởi chạy nền qua `threading.Thread` trên địa chỉ `0.0.0.0:8080`.
+     - Tự động nhận diện IP nội bộ máy tính (`get_lan_ip()`, ví dụ: `192.168.50.233:8080`).
+     - Tự động sinh mã QR Code động trực tiếp trên giao diện bằng thư viện `qrcode`.
+     - Nút `📋 Sao chép địa chỉ` và `🌐 Mở trên Trình duyệt`.
+     - Hiển thị thống kê trực tiếp: Số cuốn sổ, số công dân, độ trễ CSDL.
+
+2. **Trên Các Máy Trạm Phụ (Không cần cài bất kỳ phần mềm nào):**
+   - Mở trình duyệt web (Google Chrome / Microsoft Edge) truy cập `http://192.168.x.x:8080` (hoặc quét mã QR).
+   - Giao diện Web Client tải về tức thì (chạy 100% offline, không cần internet).
+   - Tìm kiếm công dân đa tiêu chí với FTS5 phản hồi < 1ms.
+   - Bấm **`👁️ Xem Trang X`**: Mở modal xem PDF nhúng trực tiếp, lật đến chính xác trang của công dân (`#page=X`).
+   - Bấm **`📊 Tải Excel`**: Tải file `.xlsx` tương ứng về máy phụ để làm việc.
 
 ---
 
