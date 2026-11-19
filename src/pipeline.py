@@ -14,6 +14,7 @@ from src.excel_generator import generate_excel_companion
 from src.folder_parser import parse_folder_hierarchy, find_province_root_dir
 from src.sequence_analyzer import analyze_license_sequences
 from src.master_summary import update_or_append_summary_entry
+from src.database import DatabaseManager
 from src.config import DEFAULT_OUTPUT_DIR
 
 def process_dossier_pdf(pdf_path: str, default_province: str = "15") -> Dict[str, Any]:
@@ -157,6 +158,19 @@ def commit_dossier(
     }
 
     update_or_append_summary_entry(summary_path, summary_record)
+
+    # 4. Zero-Config Database Sync into SQLite
+    try:
+        db = DatabaseManager()
+        db.insert_or_update_dossier(
+            final_filename=final_filename,
+            cover_meta=cover_meta,
+            citizens=citizens,
+            pdf_path=target_pdf,
+            excel_path=target_xlsx
+        )
+    except Exception as e:
+        print(f"Warning: SQLite sync failed: {e}")
     
     return {
         "success": True,

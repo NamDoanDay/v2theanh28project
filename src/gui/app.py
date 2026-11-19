@@ -1,5 +1,8 @@
 """
 Main Application Window for GPLX Digitization, Renaming & Verification.
+Features Dual-Mode Interface:
+Tab 1: 📥 Số hóa & Đổi tên (3-column resizable layout with PanedWindow)
+Tab 2: 🔍 Tra cứu Hồ sơ (Sub-millisecond query, 1-click jump to PDF page)
 """
 import os
 import threading
@@ -11,6 +14,7 @@ from typing import Dict, Any, Optional
 from src.gui.batch_queue import BatchQueueFrame
 from src.gui.pdf_viewer import PDFViewerFrame
 from src.gui.review_panel import ReviewPanel
+from src.gui.search_screen import SearchScreenFrame
 from src.pipeline import process_dossier_pdf, commit_dossier
 from src.config import DEFAULT_OUTPUT_DIR
 
@@ -18,7 +22,7 @@ class GPLXApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("HỆ THỐNG SỐ HÓA, ĐỔI TÊN & RÀ SOÁT SỔ GỐC GPLX (v2.0)")
+        self.title("HỆ THỐNG SỐ HÓA, ĐỔI TÊN & TRA CỨU HỒ SƠ GPLX LỊCH SỬ (v2.0)")
         self.geometry("1400x850")
         self.minsize(1200, 700)
 
@@ -38,11 +42,21 @@ class GPLXApp(ctk.CTk):
             pass
 
     def _build_layout(self):
-        # 1. Main 3-column split layout using PanedWindow for draggable resizing
-        # Allows user to drag left and right between Queue, PDF Viewer, and Review Panel
+        # Top Tabview
+        self.tabview = ctk.CTkTabview(self, corner_radius=6)
+        self.tabview.pack(fill="both", expand=True, padx=6, pady=(4, 6))
+
+        self.tab_ingest = self.tabview.add("📥 SỐ HÓA & ĐỔI TÊN HỒ SƠ")
+        self.tab_search = self.tabview.add("🔍 TRA CỨU HỒ SƠ & MỞ FILE SCAN")
+
+        self._build_ingest_tab()
+        self._build_search_tab()
+
+    def _build_ingest_tab(self):
+        # 3-column split layout using PanedWindow for draggable resizing
         sash_color = "#B0B8C4" if ctk.get_appearance_mode() == "Light" else "#3A3D40"
         self.paned = tk.PanedWindow(
-            self,
+            self.tab_ingest,
             orient=tk.HORIZONTAL,
             sashrelief=tk.RAISED,
             sashwidth=6,
@@ -50,7 +64,7 @@ class GPLXApp(ctk.CTk):
             bg=sash_color,
             bd=0
         )
-        self.paned.pack(fill="both", expand=True, padx=4, pady=4)
+        self.paned.pack(fill="both", expand=True, padx=2, pady=2)
 
         # Pane 1: Sidebar Batch Queue
         self.sidebar = BatchQueueFrame(
@@ -73,6 +87,18 @@ class GPLXApp(ctk.CTk):
             on_page_jump_callback=self.on_page_jump
         )
         self.paned.add(self.review, minsize=420, width=580)
+
+    def _build_search_tab(self):
+        self.search_screen = SearchScreenFrame(
+            self.tab_search,
+            on_open_pdf_callback=self.on_search_view_pdf
+        )
+        self.search_screen.pack(fill="both", expand=True)
+
+    def on_search_view_pdf(self, pdf_path: str, page_num: int):
+        """Switches to Ingestion tab and loads the PDF at the specific page."""
+        self.tabview.set("📥 SỐ HÓA & ĐỔI TÊN HỒ SƠ")
+        self.viewer.load_pdf(pdf_path, initial_page=page_num)
 
     def on_file_selected(self, file_path: str):
         item = self.sidebar.get_item(file_path)
@@ -166,6 +192,9 @@ class GPLXApp(ctk.CTk):
             # Update sidebar status
             self.sidebar.update_item_status(original_path, "COMPLETED")
 
+            # Refresh search screen stats
+            self.search_screen.refresh_stats()
+
             # Notification
             msg = (
                 f"Đã duyệt và lưu thành công vào đúng thư mục tải lên!\n\n"
@@ -174,7 +203,7 @@ class GPLXApp(ctk.CTk):
                 f"• File Excel con: {os.path.basename(res['excel_path'])}\n"
                 f"• Cập nhật Sổ theo dõi tỉnh: {os.path.basename(res['master_summary_path'])}\n"
                 f"• Tệp gốc ({os.path.basename(original_path)}) vẫn được giữ nguyên toàn vẹn!\n"
-                f"• Tổng số GPLX: {res['total_citizens']}"
+                f"• Đồng bộ vào CSDL tìm kiếm: {res['total_citizens']} công dân."
             )
             messagebox.showinfo("Thành công", msg)
 

@@ -6,6 +6,7 @@ STT, Họ và tên, Năm sinh, Quốc tịch, Nơi cư trú, Số bằng, Ký nh
 import re
 from typing import List, Dict, Any, Tuple
 from src.naming_rules import normalize_license_code
+from src.vietnamese_utils import restore_vietnamese_name, normalize_vietnamese_address, normalize_nationality
 
 def assign_column_by_x_ratio(x_ratio: float) -> str:
     """
@@ -158,6 +159,10 @@ def cluster_boxes_into_rows(ocr_results: List[Any], img_width: int, img_height: 
             
         # Only add if has a valid name or license number (and not a header)
         if row_dict["full_name"] or (row_dict["license_number"] and row_dict["license_number"] != "UNKNOWN"):
+            # Restore full Vietnamese accents for name, address, and nationality
+            row_dict["full_name"] = restore_vietnamese_name(row_dict["full_name"])
+            row_dict["address"] = normalize_vietnamese_address(row_dict["address"])
+            row_dict["nationality"] = normalize_nationality(row_dict["nationality"])
             citizens.append(row_dict)
             
     # Renumber STT sequentially starting from 1

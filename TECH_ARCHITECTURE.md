@@ -63,7 +63,7 @@ graph TD
 | **Xử lý nền (Backend Core)** | **Python 3.10+ (FastAPI + Uvicorn)** | Hệ sinh thái AI/OCR tiếng Việt số 1 hiện nay. Đóng gói gọn thành tiến trình nền (Portable Background Worker) bằng PyInstaller. |
 | **Trích xuất & Xử lý PDF** | **PyMuPDF (`fitz`) & pdf2image** | Tốc độ chuyển đổi trang PDF sang ảnh siêu nhanh (vài chục ms/trang), giữ nguyên độ phân giải cao phục vụ OCR. |
 | **Nhận diện Bảng & Xử lý ảnh** | **OpenCV + PP-StructureV2** | Tự động phát hiện các đường kẻ bảng (kể cả nét đứt), cắt thành từng ô (cell) độc lập để OCR chính xác từng cột. |
-| **OCR Chữ In & Chữ Viết Tay** | **PaddleOCR v4 (Vietnamese) + VietOCR (ONNX)** | - PaddleOCR: Đọc chữ in tiếng Việt cực nhanh trên CPU (~0.2s/ô).<br>- VietOCR (chạy runtime ONNX nhẹ): Chuyên biệt hóa để đọc chữ viết tay và số bằng lái, tối ưu chạy mượt trên CPU máy văn phòng không cần card đồ họa rời. |
+| **OCR Chữ In & Chữ Viết Tay** | **PaddleOCR v4 + VietOCR ONNX + Vietnamese Normalizer** | Nhận diện ký tự bảng biểu, kết hợp module khôi phục và chuẩn hóa Dấu Tiếng Việt đầy đủ ([src/vietnamese_utils.py](file:///c:/Users/FPT%20SHOP/Desktop/v2theanh28project/src/vietnamese_utils.py)) cho Họ tên, Nơi cư trú, Quốc tịch và Tiêu đề sổ. |
 | **Xuất file Excel** | **openpyxl** | Tạo file `.xlsx` định dạng đẹp, căn giữa, kẻ bảng, tự động đặt tên theo chuẩn. |
 | **Cơ sở dữ liệu (Database)** | **SQLite 3 + Module FTS5 (Full-Text Search)** | **Zero-Config 100%**: Chỉ là 1 file duy nhất `gplx_data.db` nằm trên ổ SSD. Không cần cài MySQL/SQL Server, hỗ trợ tìm kiếm không dấu siêu tốc (< 20ms). |
 

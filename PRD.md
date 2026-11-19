@@ -57,12 +57,12 @@ Cấu trúc quy định:
 - `15.SQL.03.1996.A161541-C244140.xlsx`
 
 ### 3.2. Cấu trúc file Excel xuất kèm (.xlsx)
-Mỗi file PDF sau khi xác nhận đổi tên sẽ tự động sinh 1 file Excel nằm cùng thư mục, chứa các cột dữ liệu:
+Mỗi file PDF sau khi xác nhận đổi tên sẽ tự động sinh 1 file Excel nằm cùng thư mục, chứa các cột dữ liệu **bắt buộc lưu trữ Tiếng Việt có dấu đầy đủ**:
 1. `STT`: Số thứ tự người dân trong sổ (1, 2, 3...)
-2. `Họ và tên`: Họ tên in hoa tiếng Việt
-3. `Năm sinh`: 4 chữ số
-4. `Quốc tịch`: Mặc định "Việt Nam" (xử lý ký hiệu `"` nếu có)
-5. `Nơi cư trú`: Địa chỉ huyện/tỉnh
+2. `Họ và tên`: Họ tên công dân **có dấu tiếng Việt chuẩn xác** (Ví dụ: `Trần Văn Yên`, `Nguyễn Văn Thúy`, `Đỗ Vi Thượng`)
+3. `Năm sinh`: 4 chữ số (Ví dụ: `1960`, `1968`)
+4. `Quốc tịch`: Mặc định chuẩn hóa **`Việt Nam`** (có dấu đầy đủ)
+5. `Nơi cư trú`: Địa chỉ hành chính chuẩn hóa **có dấu tiếng Việt** (Ví dụ: `H. Lục Yên, Tỉnh Yên Bái`)
 6. `Số bằng`: Mã số bằng lái (chữ + số, ví dụ `A161541`)
 7. `Số trang PDF`: Trang xuất hiện trong file PDF tương ứng
 8. `Hạng / Khóa / Ngày thi`: Thông tin trích xuất từ bìa sổ
