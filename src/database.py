@@ -186,6 +186,7 @@ class DatabaseManager:
         self,
         query: str,
         province_code: Optional[str] = None,
+        dossier_id: Optional[int] = None,
         limit: int = 150
     ) -> List[Dict[str, Any]]:
         """
@@ -194,13 +195,14 @@ class DatabaseManager:
         - Citizen Name (accented 'Trần Văn Yên' or unaccented 'tran van yen')
         - Birth Year (e.g. '1960')
         - Location
+        - Dossier ID (to view all citizens within a specific imported book)
         """
-        if not query or not query.strip():
-            return []
-
-        q = query.strip()
+        q = (query or "").strip()
         q_unaccent = remove_vietnamese_accents(q)
         q_lic = q.replace(" ", "").upper()
+
+        if not q and not dossier_id:
+            return []
 
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -227,23 +229,33 @@ class DatabaseManager:
                 d.exam_date
             FROM citizens c
             JOIN dossiers d ON c.dossier_id = d.id
-            WHERE (
-                c.license_number LIKE ?
-                OR c.full_name_unaccented LIKE ?
-                OR c.full_name LIKE ?
-                OR c.birth_year = ?
-            )
+            WHERE 1=1
             """
-            params = [
-                f"%{q_lic}%",
-                f"%{q_unaccent}%",
-                f"%{q}%",
-                q
-            ]
+            params = []
+
+            if q:
+                sql += """
+                AND (
+                    c.license_number LIKE ?
+                    OR c.full_name_unaccented LIKE ?
+                    OR c.full_name LIKE ?
+                    OR c.birth_year = ?
+                )
+                """
+                params.extend([
+                    f"%{q_lic}%",
+                    f"%{q_unaccent}%",
+                    f"%{q}%",
+                    q
+                ])
 
             if province_code and province_code != "all":
                 sql += " AND d.province_code = ?"
                 params.append(province_code)
+
+            if dossier_id:
+                sql += " AND d.id = ?"
+                params.append(dossier_id)
 
             sql += " ORDER BY c.id ASC LIMIT ?"
             params.append(limit)
@@ -252,6 +264,96 @@ class DatabaseManager:
             rows = cursor.fetchall()
 
             return [dict(row) for row in rows]
+
+    def get_all_dossiers(
+        self,
+        province_code: Optional[str] = "all",
+        box: Optional[str] = "all",
+        search_kw: str = "",
+        limit: int = 200
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieves all imported dossiers/Excel registers with box, box_number and license statistics.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            sql = """
+            SELECT 
+                d.id,
+                d.final_filename,
+                d.pdf_path,
+                d.excel_path,
+                d.province_code,
+                d.book_type,
+                d.exam_date,
+                d.license_class,
+                d.course,
+                d.box,
+                d.box_number,
+                d.total_citizens,
+                d.total_pages,
+                d.license_sequence,
+                d.status_note,
+                d.created_at
+            FROM dossiers d
+            WHERE 1=1
+            """
+            params = []
+            if province_code and province_code != "all":
+                sql += " AND d.province_code = ?"
+                params.append(province_code)
+            if box and box != "all":
+                sql += " AND d.box = ?"
+                params.append(box)
+            if search_kw and search_kw.strip():
+                sql += " AND (d.final_filename LIKE ? OR d.box LIKE ? OR d.box_number LIKE ?)"
+                kw = f"%{search_kw.strip()}%"
+                params.extend([kw, kw, kw])
+            
+            sql += " ORDER BY d.id DESC LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    def get_inventory_stats(self) -> Dict[str, Any]:
+        """
+        Calculates aggregate inventory statistics across all imported files and boxes.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(DISTINCT province_code) FROM dossiers")
+            total_provinces = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(DISTINCT box) FROM dossiers WHERE box IS NOT NULL AND box != ''")
+            total_boxes = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(DISTINCT box || '_' || box_number) FROM dossiers WHERE box_number IS NOT NULL AND box_number != ''")
+            total_box_numbers = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(*) FROM dossiers")
+            total_dossiers = cursor.fetchone()[0] or 0
+
+            cursor.execute("SELECT COUNT(*) FROM citizens")
+            total_citizens = cursor.fetchone()[0] or 0
+
+            return {
+                "total_provinces": total_provinces,
+                "total_boxes": total_boxes,
+                "total_box_numbers": total_box_numbers,
+                "total_dossiers": total_dossiers,
+                "total_citizens": total_citizens
+            }
+
+    def get_distinct_boxes(self, province_code: str = "all") -> List[str]:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if province_code and province_code != "all":
+                cursor.execute("SELECT DISTINCT box FROM dossiers WHERE province_code = ? AND box IS NOT NULL AND box != '' ORDER BY box ASC", (province_code,))
+            else:
+                cursor.execute("SELECT DISTINCT box FROM dossiers WHERE box IS NOT NULL AND box != '' ORDER BY box ASC")
+            return [str(r[0]) for r in cursor.fetchall()]
 
     def get_stats(self) -> Dict[str, int]:
         with self.get_connection() as conn:

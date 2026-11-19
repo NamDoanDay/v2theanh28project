@@ -65,7 +65,20 @@ class BatchQueueFrame(ctk.CTkFrame):
             height=30,
             command=self._choose_files
         )
-        self.btn_open_files.pack(fill="x", padx=10, pady=(2, 6))
+        self.btn_open_files.pack(fill="x", padx=10, pady=(2, 4))
+
+        # Folder Batch Copy & Rename button
+        self.btn_rename_folder = ctk.CTkButton(
+            self,
+            text="📑 Đổi tên file (theo folder)",
+            font=("Segoe UI", 11, "bold"),
+            fg_color="#D97706",
+            hover_color="#B45309",
+            text_color="white",
+            height=30,
+            command=self._choose_folder_and_batch_rename
+        )
+        self.btn_rename_folder.pack(fill="x", padx=10, pady=(2, 6))
 
         # Progress info
         self.lbl_stats = ctk.CTkLabel(self, text="0 file trong hàng đợi", font=("Segoe UI", 11, "italic"))
@@ -110,6 +123,55 @@ class BatchQueueFrame(ctk.CTkFrame):
         )
         if files:
             self._add_files_to_queue(list(files))
+
+    def _choose_folder_and_batch_rename(self):
+        folder = filedialog.askdirectory(title="Chọn thư mục chứa các file PDF scan cần đổi tên")
+        if not folder:
+            return
+
+        prov_code = self.get_selected_province_code()
+
+        # Disable button during processing
+        self.btn_rename_folder.configure(state="disabled", text="⏳ Đang đổi tên...")
+        self.progress_bar.set(0)
+        self.lbl_stats.configure(text="Đang quét thư mục...")
+
+        def worker():
+            from src.pipeline import batch_copy_and_rename_folder_pdfs
+            try:
+                def on_progress(current, total, filename):
+                    pct = current / total if total > 0 else 0
+                    self.after(0, lambda: self._update_batch_rename_progress(current, total, filename, pct))
+
+                res = batch_copy_and_rename_folder_pdfs(folder, default_province=prov_code, progress_callback=on_progress)
+                self.after(0, lambda: self._on_batch_rename_complete(folder, res))
+            except Exception as e:
+                from tkinter import messagebox
+                self.after(0, lambda: messagebox.showerror("Lỗi Đổi Tên", f"Quá trình đổi tên theo folder gặp lỗi:\n{e}"))
+            finally:
+                self.after(0, lambda: self.btn_rename_folder.configure(state="normal", text="📑 Đổi tên file (theo folder)"))
+
+        import threading
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+    def _update_batch_rename_progress(self, current: int, total: int, filename: str, pct: float):
+        self.progress_bar.set(pct)
+        self.lbl_stats.configure(text=f"Đang xử lý {current}/{total}: {filename[:16]}...")
+
+    def _on_batch_rename_complete(self, folder: str, res: Dict[str, Any]):
+        from tkinter import messagebox
+        self.progress_bar.set(1.0)
+        self.lbl_stats.configure(text=f"Đổi tên xong: {res['success_count']}/{res['total_scanned']} file")
+        msg = (
+            f"Đã hoàn thành Đổi tên file (theo folder)!\n\n"
+            f"• Thư mục: {folder}\n"
+            f"• Tổng số file PDF scan: {res['total_scanned']}\n"
+            f"• Số file đã copy & đổi tên chuẩn: {res['success_count']}\n"
+            f"• Lỗi / Bỏ qua: {res['failed_count']}\n\n"
+            f"Tất cả các file scan gốc cũ vẫn được giữ nguyên vẹn 100%!"
+        )
+        messagebox.showinfo("Hoàn Tất Đổi Tên", msg)
 
     def _scan_and_populate_folder(self, folder_path: str):
         pdf_paths = []

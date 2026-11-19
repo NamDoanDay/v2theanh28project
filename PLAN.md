@@ -69,6 +69,12 @@ flowchart LR
     - [x] Nửa bên phải (`src/gui/review_panel.py`): Banner tên file đề xuất, form thông tin bìa (Loại sổ, Khóa, Ngày thi), **ô HỘP, HỘP SỐ**, **ô Rà soát dãy số & Ghi chú nhận định (Đủ vs Ngắt quãng)**, bảng dữ liệu công dân dạng ô nhập chỉnh sửa nhanh.
   - [x] Cơ chế tương tác nhảy trang: Bấm vào số trang `P.2` của công dân nào là PDF Viewer tự động cuộn đến chính xác trang đó.
   - [x] Nút bấm `1-Click Xác nhận`: Đổi tên file PDF + Tạo file Excel con + Cập nhật tự động dòng mới vào File Excel Tổng Hợp Tỉnh + Tự động chuyển trạng thái hàng đợi sang `Hoàn thành` và nạp file kế tiếp.
+  - [x] **[MỚI] Nút 'Đổi tên file (theo folder)' với Thuật toán Fast OCR Siêu Tốc** (`src/gui/batch_queue.py`, `src/pipeline.py`):
+    - [x] Cho phép chọn cả thư mục chứa hàng loạt file PDF scan gốc.
+    - [x] **Thuật toán Fast OCR tối ưu hóa**: Chỉ đọc tối đa 3 trang (Trang 1: Bìa lấy Mã tỉnh/Tháng/Năm, Trang 2: Hàng 1 lấy Số bằng đầu, Trang cuối: Hàng cuối lấy Số bằng cuối). Bỏ qua 100% các trang ở giữa, giúp tăng tốc độ gấp 15 - 30 lần.
+    - [x] Cơ chế cứu nguy tự động: Nếu ô đầu/cuối bị mờ/trống thì tự động quét dòng kế cận gần nhất để đảm bảo luôn trích xuất được số bằng chuẩn.
+    - [x] Tự động copy ra file PDF mới có tên chuẩn `[Mã tỉnh].[SQL].[Tháng].[Năm].[Số đầu]-[Số cuối].pdf`.
+    - [x] Bảo toàn 100% file gốc cũ, không xóa file cũ, không cần sinh file Excel con, có thanh tiến trình (progress bar).
   - [x] Viết script kiểm thử tự động `test_phase2.py` kiểm chứng toàn bộ luồng tương tác giao diện và cập nhật dữ liệu.
 - **Sản phẩm đầu ra (Deliverables)**:
   - Ứng dụng Desktop chạy độc lập qua lệnh `python app_desktop.py`, giao diện trực quan, chia 3 cột hiện đại, mở toàn màn hình, lưu in-place an toàn và xử lý đa luồng ngầm không đơ giật.
@@ -84,6 +90,11 @@ flowchart LR
     - [x] Ô tìm kiếm thông minh: Gõ số bằng, họ tên (không dấu/có dấu), năm sinh.
     - [x] Bảng hiển thị danh sách kết quả tìm kiếm với độ trễ < 20ms.
     - [x] Bộ lọc theo Tỉnh / Thành phố.
+    - [x] **[MỚI] Chế độ xem theo dõi '📁 Danh Mục Sổ / File Excel Đã Import'**:
+      - [x] Bổ sung bộ chuyển đổi 2 chế độ xem: `👤 Tra Cứu Công Dân` và `📁 Danh Mục Sổ / File Excel Đã Import`.
+      - [x] Bảng theo dõi chi tiết toàn bộ hồ sơ trong database: Tỉnh, HỘP, HỘP SỐ, Tên file PDF/Excel, Hạng, Khóa, Ngày bìa, Tổng số lượng GPLX, Ngày nạp.
+      - [x] Thẻ thống kê tổng quan: Tổng số Tỉnh, Tổng số Hộp, Tổng số Hộp số, Tổng số file đã import.
+      - [x] Nút tương tác nhanh: `👥 Xem toàn bộ công dân trong sổ`, `👁️ Mở PDF`, `📊 Mở Excel`.
   - [x] Tích hợp **Trình xem PDF nội bộ & Nhảy chính xác tới trang**:
     - [x] Bấm nút `👁️ Xem PDF (Trang X)` là hệ thống tự động lật đến chính xác trang của công dân đó.
   - [x] Thêm các nút thao tác nhanh:

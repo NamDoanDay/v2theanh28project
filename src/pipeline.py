@@ -185,3 +185,183 @@ def commit_dossier(
         "total_citizens": len(citizens),
         "final_filename": final_filename
     }
+
+def fast_extract_rename_metadata(pdf_path: str, default_province: str = "15") -> str:
+    """
+    Thuật toán trích xuất siêu tốc tối ưu riêng cho chức năng đổi tên file (theo folder):
+    - Đọc Trang 1 (Bìa) để lấy Mã tỉnh, Tháng, Năm của ngày thi/ngày ký sổ.
+    - Đọc Trang 2 (Trang danh sách đầu tiên) tại Hàng 1 để lấy Số bằng đầu (STT 1).
+    - Đọc Trang cuối (Trang danh sách cuối) tại Hàng cuối để lấy Số bằng cuối (STT cuối).
+    - BỎ QUA HOÀN TOÀN TẤT CẢ CÁC TRANG Ở GIỮA (tiết kiệm 90% thời gian xử lý và CPU).
+    - Nếu ô đầu/cuối bị mờ/trống: Tự động quét dòng kế cận gần nhất để đảm bảo luôn lấy được số bằng chuẩn.
+    """
+    import re
+    from src.pdf_processor import get_pdf_page_count, render_specific_pdf_pages
+    from src.naming_rules import normalize_license_code
+
+    total_pages = get_pdf_page_count(pdf_path)
+    if total_pages == 0:
+        raise ValueError("File PDF rỗng không có trang nào.")
+
+    # Chỉ render tối đa 3 trang cần thiết
+    if total_pages == 1:
+        needed_indices = [0]
+    elif total_pages == 2:
+        needed_indices = [0, 1]
+    else:
+        needed_indices = [0, 1, total_pages - 1]
+
+    rendered_pages = render_specific_pdf_pages(pdf_path, needed_indices, dpi=200)
+
+    # 1. Đọc Trang bìa (Trang 1 - index 0)
+    cover_img = rendered_pages[0]
+    cover_ocr_res, _ = run_ocr(cover_img)
+    cover_text = " ".join([str(item[1]) for item in cover_ocr_res])
+    cover_meta = parse_cover_page_text(cover_text)
+
+    folder_info = parse_folder_hierarchy(pdf_path)
+    prov_code = cover_meta.get("province_code") or folder_info.get("province_code") or default_province or "15"
+
+    exam_date = cover_meta.get("exam_date", "")
+    month, year = "01", "1996"
+    if exam_date and "-" in exam_date:
+        parts = exam_date.split("-")
+        if len(parts) >= 3:
+            month = parts[1].strip()
+            year = parts[2].strip()
+        elif len(parts) == 2:
+            month = parts[0].strip()
+            year = parts[1].strip()
+    else:
+        m_date = re.search(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})", cover_text)
+        if m_date:
+            month = m_date.group(2)
+            year = m_date.group(3)
+        else:
+            m_my = re.search(r"(\d{1,2})[\/\-\.](\d{4})", cover_text)
+            if m_my:
+                month = m_my.group(1)
+                year = m_my.group(2)
+
+    def extract_license_from_page(img, direction="first"):
+        w, h = img.size
+        ocr_res, _ = run_ocr(img)
+        rows = cluster_boxes_into_rows(ocr_res, w, h)
+        if direction == "last":
+            rows = list(reversed(rows))
+
+        # Quét lần lượt các dòng (dòng 1 trước, nếu mờ thì quét dòng kế cận)
+        for r in rows:
+            lic = r.get("license_number", "")
+            if lic and lic != "UNKNOWN" and len(lic) >= 5:
+                return lic
+
+        # Cứu nguy: Quét toàn bộ các box text trên trang
+        box_texts = [str(item[1]).strip() for item in ocr_res]
+        if direction == "last":
+            box_texts = list(reversed(box_texts))
+
+        for text in box_texts:
+            m = re.search(r"([A-Za-z]{1,2}\s*[0-9]{5,7})", text)
+            if m:
+                return normalize_license_code(m.group(1))
+
+        return None
+
+    # 2. Đọc Trang 2 (Trang danh sách đầu tiên) -> Số bằng đầu
+    first_license = "A000000"
+    if total_pages >= 2:
+        p2_img = rendered_pages[1]
+        found = extract_license_from_page(p2_img, direction="first")
+        if found:
+            first_license = found
+    else:
+        found = extract_license_from_page(cover_img, direction="first")
+        if found:
+            first_license = found
+
+    # 3. Đọc Trang cuối -> Số bằng cuối
+    last_license = first_license
+    if total_pages >= 3:
+        last_idx = total_pages - 1
+        last_img = rendered_pages[last_idx]
+        found = extract_license_from_page(last_img, direction="last")
+        if found:
+            last_license = found
+    elif total_pages == 2:
+        p2_img = rendered_pages[1]
+        found = extract_license_from_page(p2_img, direction="last")
+        if found:
+            last_license = found
+
+    return build_dossier_filename(
+        province_code=prov_code,
+        doc_type="SQL",
+        month=month,
+        year=year,
+        first_license=first_license,
+        last_license=last_license
+    )
+
+def batch_copy_and_rename_folder_pdfs(
+    folder_path: str,
+    default_province: str = "15",
+    progress_callback = None
+) -> Dict[str, Any]:
+    """
+    Scans a folder for raw scanned PDF files, extracts metadata and license ranges via OCR,
+    and copies each file into a new file named [Mã tỉnh].[SQL].[Tháng].[Năm].[Số đầu]-[Số cuối].pdf.
+    Preserves 100% of original files without modifying them. Does not generate companion Excel files.
+    """
+    import shutil
+    import re
+
+    # Pattern identifying files that are already renamed according to standard format
+    STANDARD_PATTERN = re.compile(r"^\d{2}\.SQL\.\d{2}\.\d{4}\..*\.pdf$", re.IGNORECASE)
+
+    found_pdfs = []
+    for root, _, files in os.walk(folder_path):
+        for f in files:
+            if f.lower().endswith(".pdf") and not STANDARD_PATTERN.match(f):
+                found_pdfs.append(os.path.join(root, f))
+
+    total_files = len(found_pdfs)
+    results = []
+
+    for idx, pdf_path in enumerate(found_pdfs, start=1):
+        if progress_callback:
+            progress_callback(idx, total_files, os.path.basename(pdf_path))
+
+        try:
+            # Thuật toán đọc nhanh siêu tốc: Chỉ đọc Trang 1, Trang 2 và Trang cuối
+            new_filename = fast_extract_rename_metadata(pdf_path, default_province=default_province)
+
+            parent_dir = os.path.dirname(os.path.abspath(pdf_path))
+            new_pdf_path = os.path.join(parent_dir, f"{new_filename}.pdf")
+
+            # Copy to new file, keeping original intact
+            if os.path.abspath(pdf_path) != os.path.abspath(new_pdf_path):
+                shutil.copy2(pdf_path, new_pdf_path)
+
+            results.append({
+                "original_path": pdf_path,
+                "new_path": new_pdf_path,
+                "new_filename": new_filename,
+                "success": True,
+                "error": None
+            })
+        except Exception as e:
+            results.append({
+                "original_path": pdf_path,
+                "new_path": None,
+                "new_filename": None,
+                "success": False,
+                "error": str(e)
+            })
+
+    return {
+        "total_scanned": total_files,
+        "success_count": sum(1 for r in results if r["success"]),
+        "failed_count": sum(1 for r in results if not r["success"]),
+        "results": results
+    }

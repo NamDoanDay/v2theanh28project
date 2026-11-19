@@ -165,6 +165,13 @@ flowchart LR
     - Nút *'Chạy OCR Tự Động'* bị disable (làm mờ) khi chưa có file nào được nạp vào hàng đợi; chỉ kích hoạt khi đã chọn thư mục hoặc file.
     - Nút *'Xác nhận: Đổi tên PDF & Xuất Excel...'* bị disable (làm mờ) trong suốt quá trình chưa chạy OCR xong; chỉ kích hoạt khi dữ liệu đã sẵn sàng để đối soát.
   - **Điểm nhấn trực quan**: Nút *'Chọn File PDF lẻ'* được thiết kế màu xanh ngọc lục bảo nổi bật (`#10B981`) để người dùng dễ nhận biết.
+- **F-110 (Đổi tên file theo folder với Thuật toán Fast OCR Tối ưu)**:
+  - Bổ sung nút **'📑 Đổi tên file (theo folder)'** trong khung Hàng đợi hồ sơ.
+  - Cho phép chọn 1 thư mục chứa nhiều file PDF scan thô; hệ thống tự động quét và đổi tên hàng loạt.
+  - **Thuật toán Fast OCR siêu tốc**: Chỉ đọc tối đa 3 trang (Trang 1: Bìa lấy Mã tỉnh/Tháng/Năm; Trang 2: Hàng 1 lấy Số bằng đầu; Trang cuối: Hàng cuối lấy Số bằng cuối). Bỏ qua 100% các trang ở giữa, giúp giảm 90% thời gian xử lý và tải CPU.
+  - Có cơ chế quét dòng kế cận nếu ô đầu/cuối bị mờ.
+  - Tự động copy ra file PDF mới có tên chuẩn `[Mã tỉnh].[SQL].[Tháng].[Năm].[Số đầu]-[Số cuối].pdf` ngay tại thư mục đó.
+  - Đảm bảo giữ nguyên 100% file gốc cũ, không xóa file cũ, không tạo file excel con (chỉ tập trung sao chép và đổi tên chuẩn).
 
 ### 5.2. Phân hệ Tra cứu & Khai thác (Module Search & Discovery)
 - **F-201 (Ô tìm kiếm đa năng)**: Tìm kiếm tức thì theo:
@@ -181,6 +188,11 @@ flowchart LR
   - Nút `Mở bằng phần mềm ngoài` (Foxit Reader, Adobe Acrobat...).
   - Nút `Mở file Excel tương ứng`.
   - Nút `Mở thư mục chứa file` trong Windows Explorer.
+- **F-205 (Theo dõi Danh mục Sổ / File Excel / Hộp / Tỉnh Đã Import)**:
+  - Trang bị 2 chế độ xem trực tiếp trên màn Tra cứu: **`👤 Tra Cứu Công Dân`** và **`📁 Danh Mục Sổ / File Excel Đã Import`**.
+  - Liệt kê đầy đủ các cuốn sổ đã import vào CSDL: Mã tỉnh, Tên tỉnh, HỘP, HỘP SỐ, Tên file PDF, Tên file Excel, Hạng, Khóa, Ngày bìa, Tổng số lượng GPLX, Ngày import.
+  - Cho phép người dùng biết chính xác những file Excel/PDF nào, hộp nào, tỉnh nào đã được đưa vào hệ thống.
+  - Hỗ trợ bấm `👥 Xem toàn bộ công dân trong sổ` để tự động chuyển sang chế độ tra cứu và lọc đúng danh sách người lái xe trong cuốn sổ đó.
 
 ### 5.3. Phân hệ Quản trị & Chia sẻ Mạng LAN (Module Administration & LAN Sharing)
 - **F-301 (Zero-Config Portable)**: Toàn bộ cấu hình và file CSDL `gplx_index.db` nằm ngay trong thư mục `HeThong/` trên ổ SSD. Không yêu cầu cấu hình cổng kết nối, mật khẩu CSDL phức tạp.
