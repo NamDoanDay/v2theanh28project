@@ -1,0 +1,57 @@
+# =====================================================================
+# GITIGNORE - HỆ THỐNG SỐ HÓA & TRA CỨU HỒ SƠ GPLX
+# =====================================================================
+
+# 1. Byte-compiled / Python bytecode cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# 2. PyInstaller & Build artifacts (Các tệp đóng gói thực thi)
+build/
+dist/
+*.spec
+So Hoa GPLX/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 3. Virtual Environments (Môi trường ảo Python)
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# 4. IDEs & Text Editors (Cấu hình bộ soạn thảo mã nguồn)
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# 5. Temporary files, Logs & Test cache
+*.log
+*.tmp
+*.temp
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 6. SQLite temporary journal & write-ahead log files
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 7. Operating System temporary files (Windows & macOS)
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*

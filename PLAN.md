@@ -133,16 +133,24 @@ flowchart LR
 ---
 
 ### Giai đoạn 5: Đóng gói Portable, Tối ưu & Bàn giao (Phase 5: Packaging & Handover) - ĐÃ HOÀN THÀNH ✅
-- **Mục tiêu**: Đóng gói thành bản Portable duy nhất nằm gọn trên ổ SSD, cắm vào máy tính là chạy; hướng dẫn sử dụng chi tiết.
+- **Mục tiêu**: Đóng gói thành bản Portable duy nhất nằm gọn trong thư mục `So Hoa GPLX`, cắm vào máy tính là chạy; hướng dẫn sử dụng chi tiết cho người dùng Non-IT.
 - **Các nhiệm vụ cụ thể**:
-  - [x] Tạo file chạy 1-Click tiện dụng cho cán bộ lưu trữ: `Chay_UngDung_GPLX.bat` (tự động nhận diện môi trường, chạy trực tiếp trên ổ SSD di động).
-  - [x] Tạo kịch bản đóng gói ứng dụng Portable bằng PyInstaller: `build_portable.py` (tự động gom CustomTkinter, ONNX Models, danh mục mã tỉnh, web client static).
+  - [x] Tạo file chạy 1-Click tiện dụng cho người dùng Non-IT: `Chay_Ngay.bat` (nhấp đúp chuột là mở ứng dụng ngay lập tức, tự động đóng cửa sổ dòng lệnh đen).
+  - [x] Tạo kịch bản đóng gói ứng dụng Portable bằng PyInstaller: `build_portable.py` (tự động gom CustomTkinter, ONNX Models, RapidOCR, Pypdfium2, FastAPI, Uvicorn, danh mục mã tỉnh, web client static).
+  - [x] Xây dựng cấu trúc thư mục bàn giao chuẩn `So Hoa GPLX`:
+    - [x] `So Hoa GPLX/Chay_Ngay.bat`: File khởi động 1-Click.
+    - [x] `So Hoa GPLX/app/`: Thư mục chứa ứng dụng độc lập (.exe) và toàn bộ dependencies.
+    - [x] `So Hoa GPLX/DuLieuSoHoa_GPLS/`: Kho dữ liệu chuẩn hóa phân cấp theo `[Tỉnh] -> HOP_[Số_Hộp] -> HoSo_[Số_Hồ_Sơ]`.
+  - [x] **[MỚI] Tự động khởi tạo cấu trúc thư mục (Auto Provisioning)** (`src/config.py`):
+    - [x] Khi ứng dụng khởi động, nếu phát hiện cấu trúc `DuLieuSoHoa_GPLS` hoặc các folder tỉnh chưa có, hệ thống tự động sinh ra đầy đủ 12 tỉnh thành miền núi phía Bắc và các cấp HOP_01, HoSo_01.
+    - [x] Tự động tạo sẵn file `HUONG_DAN_LUU_TRU.txt` và nạp sẵn file PDF scan mẫu để người dùng thử nghiệm ngay lập tức.
+    - [x] Hộp thoại chọn file và chọn folder trong ứng dụng tự động mở thẳng vào `DuLieuSoHoa_GPLS`.
   - [x] Tối ưu hóa dung lượng model AI và tốc độ chạy trên CPU máy văn phòng (RAM 4GB - 8GB, không cần GPU rời).
   - [x] Thử nghiệm Stress Test tải cao: `test_phase5_stress.py` kiểm chứng độ ổn định khi xử lý hàng loạt tệp PDF và 200 truy vấn FTS5 liên tục với độ trễ < 2ms.
   - [x] Soạn thảo bộ tài liệu Sổ tay Hướng dẫn sử dụng nhanh chi tiết: `HUONG_DAN_SU_DUNG.md` (hướng dẫn từng bước với quy trình trực quan, phím tắt, cấu trúc thư mục và xử lý sự cố).
   - [x] Hoàn thiện bàn giao nghiệm thu 100% tất cả 5 giai đoạn của dự án.
 - **Sản phẩm đầu ra (Deliverables)**:
-  - Bản Portable hoàn chỉnh trên ổ SSD cắm vào máy tính là chạy ngay; tài liệu hướng dẫn sử dụng chi tiết và bộ test suite kiểm chứng 100% chức năng.
+  - Bản Portable trọn gói tại thư mục `So Hoa GPLX` cắm vào máy tính là chạy ngay; tài liệu hướng dẫn sử dụng chi tiết và bộ test suite kiểm chứng 100% chức năng.
 
 ---
 

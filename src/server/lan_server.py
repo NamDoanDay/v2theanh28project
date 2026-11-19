@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 import qrcode
 
 from src.database import DatabaseManager
-from src.config import PROVINCE_CODES
+from src.config import PROVINCE_CODES, get_resource_path
 
 def get_lan_ip() -> str:
     """
@@ -57,7 +57,9 @@ app.add_middleware(
 db_manager = DatabaseManager()
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-INDEX_HTML_PATH = os.path.join(STATIC_DIR, "index.html")
+INDEX_HTML_PATH = get_resource_path(os.path.join("src", "server", "static", "index.html"))
+if not os.path.exists(INDEX_HTML_PATH):
+    INDEX_HTML_PATH = os.path.join(STATIC_DIR, "index.html")
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():

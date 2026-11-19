@@ -10,8 +10,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.gui.app import GPLXApp
+from src.config import init_digitization_structure
 
 def main():
+    # Tự động khởi tạo cấu trúc thư mục chuẩn: So Hoa GPLX/DuLieuSoHoa_GPLS/[Tỉnh]/HOP/HoSo
+    init_digitization_structure()
+    
     app = GPLXApp()
     app.mainloop()
 

@@ -13,7 +13,7 @@ from tkinter import messagebox, filedialog
 from typing import List, Dict, Any, Optional, Callable
 
 from src.database import DatabaseManager
-from src.config import PROVINCE_CODES
+from src.config import PROVINCE_CODES, get_default_dulieu_dir
 from src.gui.pdf_viewer import PDFViewerFrame
 
 class SearchScreenFrame(ctk.CTkFrame):
@@ -527,7 +527,10 @@ class SearchScreenFrame(ctk.CTkFrame):
             messagebox.showerror("Lỗi", f"Không thể mở thư mục:\n{e}")
 
     def _sync_from_excel_folder(self):
-        folder = filedialog.askdirectory(title="Chọn thư mục chứa các tệp Excel để đồng bộ vào CSDL")
+        folder = filedialog.askdirectory(
+            title="Chọn thư mục chứa các tệp Excel để đồng bộ vào CSDL",
+            initialdir=get_default_dulieu_dir()
+        )
         if not folder:
             return
 

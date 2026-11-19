@@ -6,7 +6,7 @@ import os
 import customtkinter as ctk
 from tkinter import filedialog
 from typing import List, Dict, Any, Callable, Optional
-from src.config import PROVINCE_CODES
+from src.config import PROVINCE_CODES, get_default_dulieu_dir
 
 class BatchQueueFrame(ctk.CTkFrame):
     def __init__(self, master, on_select_file_callback: Callable, on_batch_start_callback: Callable, **kwargs):
@@ -112,20 +112,27 @@ class BatchQueueFrame(ctk.CTkFrame):
         return "15"
 
     def _choose_folder(self):
-        folder = filedialog.askdirectory(title="Chọn thư mục chứa các file scan PDF")
+        folder = filedialog.askdirectory(
+            title="Chọn thư mục chứa các file scan PDF",
+            initialdir=get_default_dulieu_dir()
+        )
         if folder:
             self._scan_and_populate_folder(folder)
 
     def _choose_files(self):
         files = filedialog.askopenfilenames(
             title="Chọn các file PDF scan",
-            filetypes=[("PDF Files", "*.pdf")]
+            filetypes=[("PDF Files", "*.pdf")],
+            initialdir=get_default_dulieu_dir()
         )
         if files:
             self._add_files_to_queue(list(files))
 
     def _choose_folder_and_batch_rename(self):
-        folder = filedialog.askdirectory(title="Chọn thư mục chứa các file PDF scan cần đổi tên")
+        folder = filedialog.askdirectory(
+            title="Chọn thư mục chứa các file PDF scan cần đổi tên",
+            initialdir=get_default_dulieu_dir()
+        )
         if not folder:
             return
 
