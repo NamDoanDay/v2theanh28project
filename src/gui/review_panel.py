@@ -244,10 +244,10 @@ class ReviewPanel(ctk.CTkFrame):
 
         # Harvest citizens
         updated_citizens = []
-        for item in self.citizen_entries:
+        for idx, item in enumerate(self.citizen_entries, start=1):
             stt_val = item["stt"].get().strip()
             updated_citizens.append({
-                "stt": int(stt_val) if stt_val.isdigit() else 1,
+                "stt": int(stt_val) if stt_val.isdigit() else idx,
                 "full_name": item["full_name"].get().strip(),
                 "birth_year": item["birth_year"].get().strip(),
                 "address": item["address"].get().strip(),

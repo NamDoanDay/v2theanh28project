@@ -67,6 +67,10 @@ def process_dossier_pdf(pdf_path: str, default_province: str = "15") -> Dict[str
             c["page_number"] = page_num
         all_citizens.extend(page_citizens)
 
+    # Đánh số thứ tự STT lần lượt liên tục từ 1 đến N cho toàn bộ danh sách trong file
+    for idx, c in enumerate(all_citizens, start=1):
+        c["stt"] = idx
+
     # 4. Analyze License Sequences and Continuity
     license_list = [c.get("license_number", "") for c in all_citizens if c.get("license_number")]
     seq_analysis = analyze_license_sequences(license_list)

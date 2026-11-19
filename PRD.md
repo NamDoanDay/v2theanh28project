@@ -58,7 +58,7 @@ Cấu trúc quy định:
 
 ### 3.2. Cấu trúc file Excel xuất kèm (.xlsx)
 Mỗi file PDF sau khi xác nhận đổi tên sẽ tự động sinh 1 file Excel nằm cùng thư mục, chứa các cột dữ liệu **bắt buộc lưu trữ Tiếng Việt có dấu đầy đủ**:
-1. `STT`: Số thứ tự người dân trong sổ (1, 2, 3...)
+1. `STT`: Số thứ tự người dân trong sổ, đánh số tuần tự lần lượt liên tục từ `1` đến `N` xuyên suốt toàn bộ các trang trong file PDF (không bị lặp đếm lại theo từng trang)
 2. `Họ và tên`: Họ tên công dân **có dấu tiếng Việt chuẩn xác** (Ví dụ: `Trần Văn Yên`, `Nguyễn Văn Thúy`, `Đỗ Vi Thượng`)
 3. `Năm sinh`: 4 chữ số (Ví dụ: `1960`, `1968`)
 4. `Quốc tịch`: Mặc định chuẩn hóa **`Việt Nam`** (có dấu đầy đủ)

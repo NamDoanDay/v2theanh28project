@@ -92,12 +92,19 @@ def generate_excel_companion(
 
     # 4. Populate Citizen Data
     current_row = header_row + 1
-    for item in citizens:
+    for idx, item in enumerate(citizens, start=1):
         ws.row_dimensions[current_row].height = 20
         is_alt = (current_row % 2 == 1)
 
+        # STT luôn được render theo thứ tự lần lượt 1..n
+        stt_val = item.get("stt")
+        if not stt_val or not str(stt_val).isdigit() or int(stt_val) <= 0:
+            stt_val = idx
+        else:
+            stt_val = int(stt_val)
+
         row_data = [
-            (item.get("stt", current_row - header_row), "center", font_body),
+            (stt_val, "center", font_body),
             (item.get("full_name", "").strip(), "left", font_bold),
             (item.get("birth_year", "").strip(), "center", font_body),
             (item.get("nationality", "Việt Nam").strip(), "center", font_body),

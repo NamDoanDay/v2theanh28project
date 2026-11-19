@@ -95,7 +95,8 @@ def cluster_boxes_into_rows(ocr_results: List[Any], img_width: int, img_height: 
         cluster.sort(key=lambda b: b["center_x"])
         
         row_dict = {
-            "stt": row_idx,
+            "stt": None,
+            "stt_from_ocr": False,
             "full_name": "",
             "birth_year": "",
             "nationality": "Việt Nam",
@@ -112,9 +113,15 @@ def cluster_boxes_into_rows(ocr_results: List[Any], img_width: int, img_height: 
             row_dict["raw_items"].append((col, b["text"], b["score"]))
             
             if col == "stt":
-                num = re.sub(r"[^0-9]", "", b["text"])
-                if num:
-                    row_dict["stt"] = int(num)
+                digits = re.findall(r"\d+", b["text"])
+                if digits:
+                    row_dict["stt"] = int(digits[0])
+                    row_dict["stt_from_ocr"] = True
+                else:
+                    t = b["text"].strip()
+                    if t in ["I", "l", "|", "!", "i", "/"]:
+                        row_dict["stt"] = 1
+                        row_dict["stt_from_ocr"] = True
             elif col == "full_name":
                 if not row_dict["full_name"]:
                     row_dict["full_name"] = b["text"]
@@ -154,6 +161,17 @@ def cluster_boxes_into_rows(ocr_results: List[Any], img_width: int, img_height: 
         if is_header_row:
             continue
 
+        # Check if STT was merged into the beginning of full_name (e.g. "1. Trần Văn Yên" or "02 - Nguyễn Văn Thủy")
+        if not row_dict.get("stt_from_ocr") and row_dict["full_name"]:
+            m = re.match(r"^(\d{1,4})[\.\s\-\/\:\)]+\s*(.*)$", row_dict["full_name"])
+            if m:
+                row_dict["stt"] = int(m.group(1))
+                row_dict["stt_from_ocr"] = True
+                row_dict["full_name"] = m.group(2).strip()
+
+        # Clean stray OCR artifacts from front of full_name (e.g. '|', '!', 'I ')
+        row_dict["full_name"] = re.sub(r"^[I\|l\!\:\.\-\–]\s*", "", row_dict["full_name"]).strip()
+
         if scores:
             row_dict["confidence"] = round(sum(scores) / len(scores), 2)
             
@@ -165,8 +183,5 @@ def cluster_boxes_into_rows(ocr_results: List[Any], img_width: int, img_height: 
             row_dict["nationality"] = normalize_nationality(row_dict["nationality"])
             citizens.append(row_dict)
             
-    # Renumber STT sequentially starting from 1
-    for idx, c in enumerate(citizens, start=1):
-        c["stt"] = idx
-
+    # Retain exact STT from OCR; do not reset sequentially per page
     return citizens

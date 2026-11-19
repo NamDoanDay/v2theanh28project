@@ -102,6 +102,10 @@ flowchart TD
     O --> P["Đưa vào Hàng Đợi Chờ Duyệt (Review Queue)"]
 ```
 
+### 3.0. Quy tắc đánh số thứ tự (STT) công dân
+- **Đánh số tuần tự liên tục**: Khi gom danh sách công dân từ nhiều trang PDF (`table_pages`), STT được đánh số tuần tự lần lượt từ `1` đến `N` (`for idx, c in enumerate(all_citizens, start=1): c['stt'] = idx`).
+- **Triệt tiêu lỗi phân trang**: Khắc phục hiện tượng STT bị reset đếm lại `1..n` trên từng trang riêng rẽ; đảm bảo file Excel xuất kèm có cột A tăng dần đều đặn liên tục, khớp chính xác số lượng hàng thực tế.
+
 ### 3.1. Chiến lược xử lý chữ viết tay và số bằng lái
 - Cột **Số bằng** là yếu tố quan trọng nhất để tạo nên tên file:
   - Thông thường có dạng: 1 chữ cái + 6 chữ số (Ví dụ: `A161541`, `C244138`).

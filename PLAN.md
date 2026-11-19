@@ -37,6 +37,10 @@ flowchart LR
     - [x] Chuẩn hóa địa chỉ hành chính có dấu đầy đủ (`H. Lục Yên, Tỉnh Yên Bái`).
     - [x] Chuẩn hóa Quốc tịch (`Việt Nam`), Loại sổ (`Sổ gốc cấp bằng lái xe cơ giới đường bộ`).
     - [x] Lưu trữ đồng bộ Tiếng Việt có dấu vào file Excel con, File Tổng hợp tỉnh và CSDL SQLite (đồng thời lưu trường không dấu để tìm kiếm siêu tốc).
+  - [x] **[MỚI BỔ SUNG] Chuẩn hóa số thứ tự (STT) lần lượt trong file Excel** (`src/table_extractor.py`, `src/pipeline.py`, `src/excel_generator.py`):
+    - [x] Khắc phục triệt để lỗi STT bị lặp đếm lại từ 1..n theo từng trang riêng rẽ.
+    - [x] Đảm bảo STT render ra file Excel đồng hành luôn chạy liên tục, tuần tự lần lượt từ 1 đến N xuyên suốt toàn bộ các trang của hồ sơ.
+    - [x] Hỗ trợ hiển thị và cho phép chỉnh sửa STT trực tiếp trên giao diện Màn hình Hậu kiểm (`ReviewPanel`).
   - [x] Viết script kiểm thử đầu cuối `test_phase1.py` xử lý hoàn chỉnh tài liệu PDF scan mẫu và kiểm chứng file tổng hợp.
 - **Sản phẩm đầu ra (Deliverables)**:
   - Script Python chạy kiểm thử độc lập: Nhận đầu vào là file PDF scan thô theo cấu trúc thư mục -> tự động nhận dạng bìa, đọc bảng, sinh file Excel con, đổi tên file PDF và cập nhật file Excel tổng hợp của tỉnh.
