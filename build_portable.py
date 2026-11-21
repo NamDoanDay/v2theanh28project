@@ -14,6 +14,13 @@ import os
 import sys
 import shutil
 import subprocess
+import tempfile
+import zipfile
+
+# Avoid Windows console code pages aborting the build on Vietnamese output.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(errors="replace")
 
 def build():
     print("=" * 70)
@@ -25,6 +32,7 @@ def build():
     build_dir = os.path.join(base_dir, "build")
     handover_dir = os.path.join(base_dir, "So Hoa GPLX")
     app_target_dir = os.path.join(handover_dir, "app")
+    zip_path = os.path.join(base_dir, "So Hoa GPLX.zip")
 
     # Data files
     data_json = os.path.join(base_dir, "data", "province_codes.json")
@@ -87,14 +95,25 @@ def build():
     print("\n[*] Đang tổ chức thư mục bàn giao chuẩn 'So Hoa GPLX'...")
     os.makedirs(handover_dir, exist_ok=True)
 
-    # 1. Di chuyển / sao chép ứng dụng đã build vào So Hoa GPLX/app
-    if os.path.exists(app_target_dir):
+    # 1. Update the runtime bundle in place and preserve the database as a
+    # one-time migration seed. PyInstaller's onedir output is version matched;
+    # overlaying avoids Windows denying deletion of loaded/protected DLL files.
+    seed_db = os.path.join(app_target_dir, "HeThong", "gplx_index.db")
+    with tempfile.TemporaryDirectory(prefix="gplx-build-") as temp_dir:
+        saved_seed = os.path.join(temp_dir, "gplx_index.db")
+        if os.path.isfile(seed_db):
+            shutil.copy2(seed_db, saved_seed)
+        os.makedirs(app_target_dir, exist_ok=True)
         try:
-            shutil.rmtree(app_target_dir)
-        except Exception as e:
-            print(f"[!] Cảnh báo không thể xóa app cũ: {e}")
-    
-    shutil.copytree(built_app_dir, app_target_dir)
+            shutil.copytree(built_app_dir, app_target_dir, dirs_exist_ok=True)
+        except (PermissionError, shutil.Error) as exc:
+            print("[!] Không thể cập nhật gói vì file ứng dụng đang được sử dụng.")
+            print("    Hãy đóng GPLX_SoHoa_TraCuu.exe rồi mở lại Build_So_Hoa_GPLX.bat.")
+            print(f"    Chi tiết: {exc}")
+            return False
+        if os.path.isfile(saved_seed):
+            os.makedirs(os.path.dirname(seed_db), exist_ok=True)
+            shutil.copy2(saved_seed, seed_db)
     print(f"    -> Đã đưa ứng dụng vào: {app_target_dir}")
 
     # 2. Khởi tạo cấu trúc thư mục DuLieuSoHoa_GPLS và Chay_Ngay.bat
@@ -110,9 +129,60 @@ def build():
         shutil.copyfile(sample_src, sample_dst)
         print(f"    -> Đã sao chép file scan mẫu: {sample_dst}")
 
+    # 4. Add a short customer guide at the package root.
+    guide_path = os.path.join(handover_dir, "HUONG_DAN_SU_DUNG.txt")
+    with open(guide_path, "w", encoding="utf-8") as guide:
+        guide.write(
+            "HUONG DAN SU DUNG SO HOA GPLX\n\n"
+            "1. Giai nen nguyen folder 'So Hoa GPLX' vao vi tri ban muon.\n"
+            "2. Mo folder vua giai nen va nhap dup 'Chay_Ngay.bat'.\n"
+            "3. Chon cac file PDF trong kho DuLieuSoHoa_GPLS de xu ly.\n\n"
+            "Khong can cai Python hoac thu vien. Nen giai nen vao noi ban co quyen ghi du lieu.\n"
+            "Du lieu va co so tra cuu cua moi tai khoan Windows duoc luu trong LocalAppData\\GPLX.\n"
+            "Xem log loi bang cach mo file Xem_Nhat_Ky.bat trong folder goc.\n"
+            "Goi nay danh cho Windows 64-bit.\n"
+        )
+
+    required_files = [
+        os.path.join(handover_dir, "Chay_Ngay.bat"),
+        os.path.join(app_target_dir, "GPLX_SoHoa_TraCuu.exe"),
+        os.path.join(app_target_dir, "_internal"),
+        os.path.join(handover_dir, "DuLieuSoHoa_GPLS"),
+    ]
+    missing = [path for path in required_files if not os.path.exists(path)]
+    if missing:
+        print("[!] Gói bàn giao thiếu thành phần bắt buộc:")
+        for path in missing:
+            print(f"    - {path}")
+        return False
+
+    # 5. Zip the entire handover directory, including empty folders, and keep
+    # the single root folder so extraction can happen anywhere.
+    if os.path.exists(zip_path):
+        os.remove(zip_path)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for current_dir, dirnames, filenames in os.walk(handover_dir):
+            for dirname in dirnames:
+                folder_path = os.path.join(current_dir, dirname)
+                folder_name = os.path.relpath(folder_path, base_dir).replace(os.sep, "/") + "/"
+                archive.writestr(folder_name, "")
+            for filename in filenames:
+                file_path = os.path.join(current_dir, filename)
+                archive_name = os.path.relpath(file_path, base_dir).replace(os.sep, "/")
+                archive.write(file_path, archive_name)
+    with zipfile.ZipFile(zip_path) as archive:
+        names = archive.namelist()
+        if not names or any(not name.startswith("So Hoa GPLX/") for name in names):
+            print("[!] ZIP không đúng cấu trúc gốc 'So Hoa GPLX/'.")
+            return False
+        if "So Hoa GPLX/app/GPLX_SoHoa_TraCuu.exe" not in names:
+            print("[!] ZIP thiếu file ứng dụng EXE.")
+            return False
+
     print("\n" + "=" * 70)
     print(">>> ĐÓNG GÓI HOÀN TẤT VÀ SẴN SÀNG BÀN GIAO CHO NGƯỜI DÙNG NON-IT! <<<")
     print(f"Vị trí gói bàn giao: {handover_dir}")
+    print(f"ZIP sẵn sàng gửi khách hàng: {zip_path}")
     print("Cấu trúc:")
     print("  So Hoa GPLX/")
     print("  ├── Chay_Ngay.bat                (Nhấp đúp chuột để mở app)")
@@ -123,4 +193,4 @@ def build():
     return True
 
 if __name__ == "__main__":
-    build()
+    sys.exit(0 if build() else 1)

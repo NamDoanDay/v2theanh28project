@@ -5,6 +5,7 @@ Tab 1: 📥 Số hóa & Đổi tên (3-column resizable layout with PanedWindow)
 Tab 2: 🔍 Tra cứu Hồ sơ (Sub-millisecond query, 1-click jump to PDF page)
 """
 import os
+import queue
 import threading
 import tkinter as tk
 import customtkinter as ctk
@@ -18,6 +19,9 @@ from src.gui.search_screen import SearchScreenFrame
 from src.gui.lan_screen import LANScreenFrame
 from src.pipeline import process_dossier_pdf, commit_dossier
 from src.config import DEFAULT_OUTPUT_DIR
+from src.logger import get_logger, set_exception_notifier
+
+logger = get_logger(__name__)
 
 class GPLXApp(ctk.CTk):
     def __init__(self):
@@ -33,8 +37,17 @@ class GPLXApp(ctk.CTk):
 
         self.active_file_path: Optional[str] = None
         self.is_processing_batch: bool = False
+        self._closing = False
+        self._ui_tasks = queue.Queue()
+        self._worker_lock = threading.Lock()
+        self._active_workers = 0
+        set_exception_notifier(
+            lambda title, message: self._dispatch_to_ui(self._show_error_popup, title, message)
+        )
 
         self._build_layout()
+        self.report_callback_exception = self._report_callback_exception
+        self.after(50, self._drain_ui_tasks)
 
         # Handle window close to shutdown LAN server gracefully
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -81,7 +94,10 @@ class GPLXApp(ctk.CTk):
             self.paned,
             width=280,
             on_select_file_callback=self.on_file_selected,
-            on_batch_start_callback=self.on_batch_run_requested
+            on_batch_start_callback=self.on_batch_run_requested,
+            dispatch_to_ui=self._dispatch_to_ui,
+            on_worker_start=self._worker_started,
+            on_worker_finish=self._worker_finished,
         )
         self.paned.add(self.sidebar, minsize=230, width=280)
 
@@ -129,19 +145,26 @@ class GPLXApp(ctk.CTk):
     def _process_single_file_async(self, file_path: str):
         self.sidebar.update_item_status(file_path, "PROCESSING")
         self.sidebar.start_loading()
+        prov_code = self.sidebar.get_selected_province_code()
 
         def worker():
-            prov_code = self.sidebar.get_selected_province_code()
             try:
                 res = process_dossier_pdf(file_path, default_province=prov_code)
-                self.after(0, lambda: self._on_single_file_processed(file_path, res))
-            except Exception as e:
-                self.after(0, lambda: self._on_single_file_error(file_path, str(e)))
+                self._dispatch_to_ui(self._on_single_file_processed, file_path, res)
+            except Exception as exc:
+                logger.exception("OCR failed for %s", file_path)
+                self._dispatch_to_ui(self._on_single_file_error, file_path, str(exc))
             finally:
-                self.after(0, self.sidebar.stop_loading)
+                self._dispatch_to_ui(self.sidebar.stop_loading)
+                self._worker_finished()
 
         t = threading.Thread(target=worker, daemon=True)
-        t.start()
+        self._worker_started()
+        try:
+            t.start()
+        except Exception:
+            self._worker_finished()
+            raise
 
     def _on_single_file_processed(self, file_path: str, data: Dict[str, Any]):
         self.sidebar.update_item_status(file_path, "READY", data=data)
@@ -167,21 +190,34 @@ class GPLXApp(ctk.CTk):
         self.sidebar.start_loading()
 
         def batch_worker():
-            for item in pending_items:
-                path = item["path"]
-                self.after(0, lambda p=path: self.sidebar.update_item_status(p, "PROCESSING"))
-                try:
-                    res = process_dossier_pdf(path, default_province=prov_code)
-                    self.after(0, lambda p=path, d=res: self.sidebar.update_item_status(p, "READY", data=d))
-                except Exception as e:
-                    self.after(0, lambda p=path: self.sidebar.update_item_status(p, "ERROR"))
-            
-            self.is_processing_batch = False
-            self.after(0, self.sidebar.stop_loading)
-            self.after(0, lambda: messagebox.showinfo("Hoàn tất", "Đã xử lý OCR xong toàn bộ hàng đợi! Bắt đầu duyệt từng file."))
+            try:
+                for item in pending_items:
+                    path = item["path"]
+                    self._dispatch_to_ui(self.sidebar.update_item_status, path, "PROCESSING")
+                    try:
+                        res = process_dossier_pdf(path, default_province=prov_code)
+                        self._dispatch_to_ui(self.sidebar.update_item_status, path, "READY", data=res)
+                    except Exception:
+                        logger.exception("Batch OCR failed for %s", path)
+                        self._dispatch_to_ui(self.sidebar.update_item_status, path, "ERROR")
+                        self._dispatch_to_ui(
+                            messagebox.showerror,
+                            "Lỗi OCR",
+                            f"Không thể xử lý file:\n{os.path.basename(path)}\n\nChi tiết đã được ghi vào log.",
+                        )
+            finally:
+                self.is_processing_batch = False
+                self._dispatch_to_ui(self.sidebar.stop_loading)
+                self._dispatch_to_ui(messagebox.showinfo, "Hoàn tất", "Đã xử lý OCR xong toàn bộ hàng đợi! Bắt đầu duyệt từng file.")
+                self._worker_finished()
 
         t = threading.Thread(target=batch_worker, daemon=True)
-        t.start()
+        self._worker_started()
+        try:
+            t.start()
+        except Exception:
+            self._worker_finished()
+            raise
 
     def on_page_jump(self, page_num: int):
         self.viewer.go_to_page(page_num)
@@ -222,8 +258,9 @@ class GPLXApp(ctk.CTk):
             # Automatically select next ready item
             self._select_next_item()
 
-        except Exception as e:
-            messagebox.showerror("Lỗi Lưu Hồ Sơ", f"Không thể lưu kết quả:\n{e}")
+        except Exception as exc:
+            logger.exception("Could not save dossier %s", original_path)
+            messagebox.showerror("Lỗi Lưu Hồ Sơ", f"Không thể lưu kết quả:\n{exc}")
 
     def _select_next_item(self):
         for item in self.sidebar.queue_items:
@@ -233,10 +270,67 @@ class GPLXApp(ctk.CTk):
 
     def on_close(self):
         """Gracefully stops LAN server and terminates GUI."""
+        with self._worker_lock:
+            active_workers = self._active_workers
+        if active_workers or not self._ui_tasks.empty():
+            messagebox.showwarning(
+                "Đang xử lý",
+                "Vui lòng đợi tác vụ nền hoàn tất rồi đóng ứng dụng để tránh gián đoạn xử lý tệp.",
+            )
+            return
+        self._closing = True
         try:
             from src.server.lan_server import lan_server
             if lan_server.is_running:
                 lan_server.stop()
         except Exception:
-            pass
+            logger.exception("Could not stop LAN server cleanly")
+        try:
+            self.viewer.close_pdf()
+        except Exception:
+            logger.exception("Could not close the active PDF cleanly")
         self.destroy()
+
+    def _dispatch_to_ui(self, callback, *args, **kwargs):
+        if not self._closing:
+            self._ui_tasks.put((callback, args, kwargs))
+
+    def _worker_started(self):
+        with self._worker_lock:
+            self._active_workers += 1
+
+    def _worker_finished(self):
+        with self._worker_lock:
+            self._active_workers -= 1
+
+    def _drain_ui_tasks(self):
+        while not self._ui_tasks.empty():
+            callback, args, kwargs = self._ui_tasks.get()
+            try:
+                callback(*args, **kwargs)
+            except Exception:
+                logger.exception("UI task callback failed: %r", callback)
+                self._show_error_popup(
+                    "Lỗi ứng dụng",
+                    "Một thao tác giao diện gặp lỗi. Chi tiết đã được ghi vào file log.",
+                )
+        if not self._closing:
+            self.after(50, self._drain_ui_tasks)
+
+    def _report_callback_exception(self, exc_type, exc_value, exc_traceback):
+        logger.error(
+            "Unhandled Tkinter callback exception",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+        self._show_error_popup(
+            "Lỗi ứng dụng",
+            "Ứng dụng gặp lỗi khi xử lý thao tác giao diện.\n"
+            f"{exc_type.__name__}: {exc_value}\n\nChi tiết đã được ghi vào file log.",
+        )
+
+    @staticmethod
+    def _show_error_popup(title: str, message: str):
+        try:
+            messagebox.showerror(title, message)
+        except Exception:
+            logger.exception("Could not display error popup")

@@ -5,6 +5,9 @@ import os
 import sys
 import json
 import re
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Determine BASE_DIR (works for both dev source and PyInstaller frozen app)
 if getattr(sys, 'frozen', False):
@@ -35,7 +38,17 @@ PROVINCE_CODES_FILE = get_resource_path(os.path.join("data", "province_codes.jso
 DEFAULT_INPUT_DIR = os.path.join(BASE_DIR, "DuLieu_GPLX", "01_ChuaXuLy")
 DEFAULT_OUTPUT_DIR = os.path.join(BASE_DIR, "DuLieu_GPLX", "02_DaXuLy_HoanThanh")
 DEFAULT_ERROR_DIR = os.path.join(BASE_DIR, "DuLieu_GPLX", "03_CoLoi_CanXemLai")
-DATABASE_PATH = os.path.join(BASE_DIR, "HeThong", "gplx_index.db")
+if getattr(sys, "frozen", False):
+    # Keep writable application data outside the extracted package. This lets
+    # customers run the app from any folder, including locations that need
+    # elevated rights to modify.
+    USER_DATA_DIR = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    USER_DATA_DIR = os.path.join(USER_DATA_DIR, "GPLX")
+    DATABASE_PATH = os.path.join(USER_DATA_DIR, "HeThong", "gplx_index.db")
+    BUNDLED_DATABASE_SEED_PATH = os.path.join(BASE_DIR, "HeThong", "gplx_index.db")
+else:
+    DATABASE_PATH = os.path.join(BASE_DIR, "HeThong", "gplx_index.db")
+    BUNDLED_DATABASE_SEED_PATH = None
 
 # Regex pattern for License Numbers:
 # Historical licenses usually start with 1-2 letters (A, B, C, AM,...) followed by 5-7 digits
@@ -47,16 +60,16 @@ def load_province_codes():
         try:
             with open(PROVINCE_CODES_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Could not load province codes from %s", PROVINCE_CODES_FILE, exc_info=True)
     # Fallback to local data folder if available
     local_path = os.path.join(BASE_DIR, "data", "province_codes.json")
     if os.path.exists(local_path):
         try:
             with open(local_path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Could not load province codes from %s", local_path, exc_info=True)
     return []
 
 PROVINCE_CODES = load_province_codes()
@@ -151,8 +164,34 @@ def init_digitization_structure(root_dir: str = None) -> str:
         try:
             with open(bat_path, "w", encoding="utf-8") as f:
                 f.write(bat_content)
-        except Exception:
-            pass
+        except OSError:
+            logger.exception("Could not create startup script at %s", bat_path)
+
+    # Shortcut to open the latest readable application log.
+    log_viewer_path = os.path.join(root_dir, "Xem_Nhat_Ky.bat")
+    if not os.path.exists(log_viewer_path):
+        log_viewer_content = (
+            "@echo off\r\n"
+            "setlocal\r\n"
+            "if not defined LOCALAPPDATA set \"LOCALAPPDATA=%APPDATA%\"\r\n"
+            "set \"LOG_DIR=%LOCALAPPDATA%\\GPLX\\logs\"\r\n"
+            "if not exist \"%LOG_DIR%\" (\r\n"
+            "  echo Chua co log. Hay mo ung dung va thuc hien lai thao tac gap loi.\r\n"
+            "  pause\r\n"
+            "  exit /b 1\r\n"
+            ")\r\n"
+            "for /f \"delims=\" %%F in ('dir /b /o-d \"%LOG_DIR%\\app_*.log\" 2^>nul') do (\r\n"
+            "  start \"\" notepad \"%LOG_DIR%\\%%F\"\r\n"
+            "  exit /b 0\r\n"
+            ")\r\n"
+            "echo Chua co file log ung dung trong: %LOG_DIR%\r\n"
+            "pause\r\n"
+        )
+        try:
+            with open(log_viewer_path, "w", encoding="utf-8") as f:
+                f.write(log_viewer_content)
+        except OSError:
+            logger.exception("Could not create log viewer at %s", log_viewer_path)
 
     # 2. Tạo thư mục app
     app_dir = os.path.join(root_dir, "app")
@@ -196,7 +235,7 @@ def init_digitization_structure(root_dir: str = None) -> str:
         try:
             with open(readme_path, "w", encoding="utf-8") as f:
                 f.write(readme_content)
-        except Exception:
-            pass
+        except OSError:
+            logger.exception("Could not create storage instructions at %s", readme_path)
 
     return dulieu_dir

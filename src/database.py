@@ -5,12 +5,14 @@ No external database server or connection string required.
 """
 import os
 import sqlite3
+import shutil
 import unicodedata
 import re
+from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 import openpyxl
 
-from src.config import DATABASE_PATH
+from src.config import DATABASE_PATH, BUNDLED_DATABASE_SEED_PATH
 
 def remove_vietnamese_accents(text: str) -> str:
     """
@@ -32,12 +34,29 @@ class DatabaseManager:
     def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = db_path
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        # Migrate the database shipped by older builds once. The live database
+        # then remains in LocalAppData and survives package upgrades/re-extracts.
+        if (
+            db_path == DATABASE_PATH
+            and BUNDLED_DATABASE_SEED_PATH
+            and not os.path.exists(db_path)
+            and os.path.isfile(BUNDLED_DATABASE_SEED_PATH)
+        ):
+            shutil.copy2(BUNDLED_DATABASE_SEED_PATH, db_path)
         self.init_db()
 
-    def get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def get_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def init_db(self):
         """Initializes tables and FTS5 full-text search index."""
@@ -257,8 +276,10 @@ class DatabaseManager:
                 sql += " AND d.id = ?"
                 params.append(dossier_id)
 
-            sql += " ORDER BY c.id ASC LIMIT ?"
-            params.append(limit)
+            sql += " ORDER BY c.id ASC"
+            if not dossier_id:
+                sql += " LIMIT ?"
+                params.append(limit)
 
             cursor.execute(sql, params)
             rows = cursor.fetchall()

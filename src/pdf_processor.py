@@ -18,18 +18,28 @@ def render_pdf_to_images(pdf_path: str, dpi: int = 200) -> List[Image.Image]:
     pdf = pdfium.PdfDocument(pdf_path)
     images = []
     scale = dpi / 72.0  # 72 is standard PDF points per inch
-    
-    for page in pdf:
-        bitmap = page.render(scale=scale)
-        pil_image = bitmap.to_pil()
-        images.append(pil_image)
-        
+    try:
+        for index in range(len(pdf)):
+            page = pdf[index]
+            try:
+                bitmap = page.render(scale=scale)
+                try:
+                    images.append(bitmap.to_pil())
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
+    finally:
+        pdf.close()
     return images
 
 def get_pdf_page_count(pdf_path: str) -> int:
     """Returns the total number of pages in the PDF."""
     pdf = pdfium.PdfDocument(pdf_path)
-    return len(pdf)
+    try:
+        return len(pdf)
+    finally:
+        pdf.close()
 
 def render_specific_pdf_pages(pdf_path: str, page_indices: List[int], dpi: int = 200) -> dict:
     """
@@ -40,13 +50,21 @@ def render_specific_pdf_pages(pdf_path: str, page_indices: List[int], dpi: int =
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
     
     pdf = pdfium.PdfDocument(pdf_path)
-    total_pages = len(pdf)
-    scale = dpi / 72.0
     rendered = {}
-    
-    for idx in page_indices:
-        if 0 <= idx < total_pages:
-            bitmap = pdf[idx].render(scale=scale)
-            rendered[idx] = bitmap.to_pil()
-            
+    try:
+        total_pages = len(pdf)
+        scale = dpi / 72.0
+        for idx in page_indices:
+            if 0 <= idx < total_pages:
+                page = pdf[idx]
+                try:
+                    bitmap = page.render(scale=scale)
+                    try:
+                        rendered[idx] = bitmap.to_pil()
+                    finally:
+                        bitmap.close()
+                finally:
+                    page.close()
+    finally:
+        pdf.close()
     return rendered

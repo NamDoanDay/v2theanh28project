@@ -16,6 +16,9 @@ from src.sequence_analyzer import analyze_license_sequences
 from src.master_summary import update_or_append_summary_entry
 from src.database import DatabaseManager
 from src.config import DEFAULT_OUTPUT_DIR
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 def process_dossier_pdf(pdf_path: str, default_province: str = "15") -> Dict[str, Any]:
     """
@@ -173,8 +176,8 @@ def commit_dossier(
             pdf_path=target_pdf,
             excel_path=target_xlsx
         )
-    except Exception as e:
-        print(f"Warning: SQLite sync failed: {e}")
+    except Exception:
+        logger.exception("SQLite sync failed for %s", final_filename)
     
     return {
         "success": True,
@@ -199,9 +202,11 @@ def fast_extract_rename_metadata(pdf_path: str, default_province: str = "15") ->
     from src.pdf_processor import get_pdf_page_count, render_specific_pdf_pages
     from src.naming_rules import normalize_license_code
 
+    logger.info("Folder rename: opening PDF %s", pdf_path)
     total_pages = get_pdf_page_count(pdf_path)
     if total_pages == 0:
         raise ValueError("File PDF rỗng không có trang nào.")
+    logger.info("Folder rename: PDF has %d pages: %s", total_pages, pdf_path)
 
     # Chỉ render tối đa 3 trang cần thiết
     if total_pages == 1:
@@ -212,12 +217,14 @@ def fast_extract_rename_metadata(pdf_path: str, default_province: str = "15") ->
         needed_indices = [0, 1, total_pages - 1]
 
     rendered_pages = render_specific_pdf_pages(pdf_path, needed_indices, dpi=200)
+    logger.info("Folder rename: rendered pages %s: %s", [i + 1 for i in rendered_pages], pdf_path)
 
     # 1. Đọc Trang bìa (Trang 1 - index 0)
     cover_img = rendered_pages[0]
     cover_ocr_res, _ = run_ocr(cover_img)
     cover_text = " ".join([str(item[1]) for item in cover_ocr_res])
     cover_meta = parse_cover_page_text(cover_text)
+    logger.info("Folder rename: cover OCR complete: %s", pdf_path)
 
     folder_info = parse_folder_hierarchy(pdf_path)
     prov_code = cover_meta.get("province_code") or folder_info.get("province_code") or default_province or "15"
@@ -244,8 +251,10 @@ def fast_extract_rename_metadata(pdf_path: str, default_province: str = "15") ->
                 year = m_my.group(2)
 
     def extract_license_from_page(img, direction="first"):
+        logger.info("Folder rename: reading license page direction=%s file=%s", direction, pdf_path)
         w, h = img.size
         ocr_res, _ = run_ocr(img)
+        logger.info("Folder rename: license OCR complete direction=%s file=%s", direction, pdf_path)
         rows = cluster_boxes_into_rows(ocr_res, w, h)
         if direction == "last":
             rows = list(reversed(rows))
@@ -315,6 +324,9 @@ def batch_copy_and_rename_folder_pdfs(
     """
     import shutil
     import re
+    import time
+
+    logger.info("Folder rename started: folder=%s province=%s", folder_path, default_province)
 
     # Pattern identifying files that are already renamed according to standard format
     STANDARD_PATTERN = re.compile(r"^\d{2}\.SQL\.\d{2}\.\d{4}\..*\.pdf$", re.IGNORECASE)
@@ -324,15 +336,22 @@ def batch_copy_and_rename_folder_pdfs(
         for f in files:
             if f.lower().endswith(".pdf") and not STANDARD_PATTERN.match(f):
                 found_pdfs.append(os.path.join(root, f))
+    found_pdfs.sort()
 
     total_files = len(found_pdfs)
     results = []
+    logger.info("Folder rename found %d unrenamed PDF files in %s", total_files, folder_path)
 
     for idx, pdf_path in enumerate(found_pdfs, start=1):
-        if progress_callback:
-            progress_callback(idx, total_files, os.path.basename(pdf_path))
-
+        started_at = time.monotonic()
         try:
+            logger.info(
+                "Folder rename file %d/%d started: path=%s size_bytes=%d",
+                idx, total_files, pdf_path, os.path.getsize(pdf_path),
+            )
+            if progress_callback:
+                progress_callback(idx, total_files, os.path.basename(pdf_path))
+
             # Thuật toán đọc nhanh siêu tốc: Chỉ đọc Trang 1, Trang 2 và Trang cuối
             new_filename = fast_extract_rename_metadata(pdf_path, default_province=default_province)
 
@@ -350,7 +369,15 @@ def batch_copy_and_rename_folder_pdfs(
                 "success": True,
                 "error": None
             })
+            logger.info(
+                "Folder rename file %d/%d completed: output=%s elapsed_seconds=%.1f",
+                idx, total_files, new_pdf_path, time.monotonic() - started_at,
+            )
         except Exception as e:
+            logger.exception(
+                "Folder rename file %d/%d failed after %.1f seconds: %s",
+                idx, total_files, time.monotonic() - started_at, pdf_path,
+            )
             results.append({
                 "original_path": pdf_path,
                 "new_path": None,
@@ -359,9 +386,14 @@ def batch_copy_and_rename_folder_pdfs(
                 "error": str(e)
             })
 
-    return {
+    result = {
         "total_scanned": total_files,
         "success_count": sum(1 for r in results if r["success"]),
         "failed_count": sum(1 for r in results if not r["success"]),
         "results": results
     }
+    logger.info(
+        "Folder rename finished: folder=%s total=%d success=%d failed=%d",
+        folder_path, result["total_scanned"], result["success_count"], result["failed_count"],
+    )
+    return result

@@ -7,13 +7,19 @@ import customtkinter as ctk
 from tkinter import filedialog
 from typing import List, Dict, Any, Callable, Optional
 from src.config import PROVINCE_CODES, get_default_dulieu_dir
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 class BatchQueueFrame(ctk.CTkFrame):
-    def __init__(self, master, on_select_file_callback: Callable, on_batch_start_callback: Callable, **kwargs):
+    def __init__(self, master, on_select_file_callback: Callable, on_batch_start_callback: Callable, dispatch_to_ui: Callable, on_worker_start: Callable, on_worker_finish: Callable, **kwargs):
         super().__init__(master, **kwargs)
         
         self.on_select_file_callback = on_select_file_callback
         self.on_batch_start_callback = on_batch_start_callback
+        self.dispatch_to_ui = dispatch_to_ui
+        self.on_worker_start = on_worker_start
+        self.on_worker_finish = on_worker_finish
         self.queue_items: List[Dict[str, Any]] = []
         self.item_widgets: Dict[str, ctk.CTkFrame] = {}
 
@@ -144,23 +150,30 @@ class BatchQueueFrame(ctk.CTkFrame):
         self.lbl_stats.configure(text="Đang quét thư mục...")
 
         def worker():
-            from src.pipeline import batch_copy_and_rename_folder_pdfs
             try:
+                from src.pipeline import batch_copy_and_rename_folder_pdfs
                 def on_progress(current, total, filename):
                     pct = current / total if total > 0 else 0
-                    self.after(0, lambda: self._update_batch_rename_progress(current, total, filename, pct))
+                    self.dispatch_to_ui(self._update_batch_rename_progress, current, total, filename, pct)
 
                 res = batch_copy_and_rename_folder_pdfs(folder, default_province=prov_code, progress_callback=on_progress)
-                self.after(0, lambda: self._on_batch_rename_complete(folder, res))
-            except Exception as e:
+                self.dispatch_to_ui(self._on_batch_rename_complete, folder, res)
+            except Exception as exc:
+                logger.exception("Folder rename failed for %s", folder)
                 from tkinter import messagebox
-                self.after(0, lambda: messagebox.showerror("Lỗi Đổi Tên", f"Quá trình đổi tên theo folder gặp lỗi:\n{e}"))
+                self.dispatch_to_ui(messagebox.showerror, "Lỗi Đổi Tên", f"Quá trình đổi tên theo folder gặp lỗi:\n{exc}")
             finally:
-                self.after(0, lambda: self.btn_rename_folder.configure(state="normal", text="📑 Đổi tên file (theo folder)"))
+                self.dispatch_to_ui(self.btn_rename_folder.configure, state="normal", text="📑 Đổi tên file (theo folder)")
+                self.on_worker_finish()
 
         import threading
         t = threading.Thread(target=worker, daemon=True)
-        t.start()
+        self.on_worker_start()
+        try:
+            t.start()
+        except Exception:
+            self.on_worker_finish()
+            raise
 
     def _update_batch_rename_progress(self, current: int, total: int, filename: str, pct: float):
         self.progress_bar.set(pct)
@@ -176,6 +189,8 @@ class BatchQueueFrame(ctk.CTkFrame):
             f"• Tổng số file PDF scan: {res['total_scanned']}\n"
             f"• Số file đã copy & đổi tên chuẩn: {res['success_count']}\n"
             f"• Lỗi / Bỏ qua: {res['failed_count']}\n\n"
+            f"Nhật ký hệ thống: %LOCALAPPDATA%\\GPLX\\logs\\app_*.log\n"
+            f"Có thể mở log mới nhất bằng file Xem_Nhat_Ky.bat ở thư mục gốc.\n\n"
             f"Tất cả các file scan gốc cũ vẫn được giữ nguyên vẹn 100%!"
         )
         messagebox.showinfo("Hoàn Tất Đổi Tên", msg)

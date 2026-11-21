@@ -101,6 +101,9 @@ class PDFViewerFrame(ctk.CTkFrame):
     def load_pdf(self, pdf_path: str, initial_page: int = 1):
         self.pdf_path = pdf_path
         try:
+            if self.pdf_doc:
+                self.pdf_doc.close()
+                self.pdf_doc = None
             self.pdf_doc = pdfium.PdfDocument(pdf_path)
             self.total_pages = len(self.pdf_doc)
             self.current_page_idx = max(0, min(initial_page - 1, self.total_pages - 1))
@@ -108,6 +111,9 @@ class PDFViewerFrame(ctk.CTkFrame):
             self.zoom_level = 1.0
             self._render_current_page()
         except Exception as e:
+            if self.pdf_doc:
+                self.pdf_doc.close()
+                self.pdf_doc = None
             self.canvas.delete("all")
             self.canvas.create_text(250, 150, text=f"Lỗi khi đọc file PDF: {e}", fill="red", font=("Segoe UI", 11))
 
@@ -118,8 +124,14 @@ class PDFViewerFrame(ctk.CTkFrame):
         page = self.pdf_doc[self.current_page_idx]
         base_dpi = 150
         scale = (base_dpi / 72.0) * self.zoom_level
-        bitmap = page.render(scale=scale)
-        pil_img = bitmap.to_pil()
+        try:
+            bitmap = page.render(scale=scale)
+            try:
+                pil_img = bitmap.to_pil()
+            finally:
+                bitmap.close()
+        finally:
+            page.close()
 
         if self.rotation_angle != 0:
             pil_img = pil_img.rotate(self.rotation_angle, expand=True)
@@ -143,6 +155,11 @@ class PDFViewerFrame(ctk.CTkFrame):
         self.lbl_zoom.configure(text=f"{int(self.zoom_level * 100)}%")
         self.btn_prev.configure(state="normal" if self.current_page_idx > 0 else "disabled")
         self.btn_next.configure(state="normal" if self.current_page_idx < self.total_pages - 1 else "disabled")
+
+    def close_pdf(self):
+        if self.pdf_doc:
+            self.pdf_doc.close()
+            self.pdf_doc = None
 
     def prev_page(self):
         if self.current_page_idx > 0:
