@@ -81,16 +81,24 @@ def build():
         os.path.join(base_dir, "app_desktop.py")
     ]
 
-    print("[*] Đang thực thi lệnh PyInstaller (vui lòng đợi khoảng 1-2 phút)...")
-    result = subprocess.run(cmd, cwd=base_dir)
-    if result.returncode != 0:
-        print("\n[!] Đóng gói thất bại với mã lỗi:", result.returncode)
-        return False
-
+    package_only = "--package-only" in sys.argv
     built_app_dir = os.path.join(dist_dir, "GPLX_SoHoa_TraCuu")
-    if not os.path.exists(built_app_dir):
-        print(f"[!] Không tìm thấy thư mục dist: {built_app_dir}")
-        return False
+
+    if package_only:
+        print("[*] Chế độ --package-only: Bỏ qua bước build PyInstaller...")
+        if not os.path.exists(built_app_dir):
+            print(f"[!] Không tìm thấy thư mục dist sẵn có: {built_app_dir}")
+            return False
+    else:
+        print("[*] Đang thực thi lệnh PyInstaller (vui lòng đợi khoảng 1-2 phút)...")
+        result = subprocess.run(cmd, cwd=base_dir)
+        if result.returncode != 0:
+            print("\n[!] Đóng gói thất bại với mã lỗi:", result.returncode)
+            return False
+
+        if not os.path.exists(built_app_dir):
+            print(f"[!] Không tìm thấy thư mục dist: {built_app_dir}")
+            return False
 
     print("\n[*] Đang tổ chức thư mục bàn giao chuẩn 'So Hoa GPLX'...")
     os.makedirs(handover_dir, exist_ok=True)
@@ -145,6 +153,8 @@ def build():
 
     required_files = [
         os.path.join(handover_dir, "Chay_Ngay.bat"),
+        os.path.join(handover_dir, "Xem_Nhat_Ky.bat"),
+        os.path.join(handover_dir, "HUONG_DAN_SU_DUNG.txt"),
         os.path.join(app_target_dir, "GPLX_SoHoa_TraCuu.exe"),
         os.path.join(app_target_dir, "_internal"),
         os.path.join(handover_dir, "DuLieuSoHoa_GPLS"),

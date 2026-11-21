@@ -1,6 +1,6 @@
 # Kế hoạch GPLX phiên bản 3
 
-**Trạng thái** — Phase 1–5 hoàn thành. Các quyết định nghiệp vụ Q1–Q8 đã được chốt trong buổi phỏng vấn `grill-me`.
+**Trạng thái** — Phase 1–6 hoàn thành 100%. Các quyết định nghiệp vụ Q1–Q8 đã được chốt và kiểm chứng đầy đủ trên dữ liệu thực tế.
 
 **Kết quả cần đạt** — Ứng dụng nhận diện được nhiều mẫu hồ sơ GPLX, đề xuất tên PDF theo đúng giai đoạn, cho phép rà soát từng file trong thư mục và xuất Excel phản ánh bảng nguồn trong luồng số hóa đầy đủ.
 
@@ -103,6 +103,8 @@ Lấy **ngày thi hoặc ngày sát hạch** để chọn nhóm. Ngày ghi trong
 
 ## Phase 6 — Chạy thử trên bộ hồ sơ đại diện và bàn giao
 
+**Trạng thái** — Hoàn thành.
+
 **Phạm vi**
 
 - Dùng bản sao PDF đại diện cho ba nhóm thời gian, các loại trang đầu và các kiểu bảng trong ảnh. Ghi kỳ vọng theo file gồm nhóm, mã tỉnh, số/ngày, trang bảng, dòng đầu và cuối, cột Excel và kết quả sổ tổng hợp.
@@ -111,8 +113,14 @@ Lấy **ngày thi hoặc ngày sát hạch** để chọn nhóm. Ngày ghi trong
 
 **Nghiệm thu** — Duyệt bộ hồ sơ mẫu từ đầu đến cuối theo kết quả đối chiếu. Hồ sơ thiếu dữ liệu được cảnh báo rõ, các file đầu ra khớp với lựa chọn đã xác nhận và có nhật ký để chẩn đoán lỗi trên bản đóng gói.
 
+**Kết quả kiểm tra** — Đã chạy kiểm tra thực tế trên 5 file PDF scan gốc tại `C:\Users\FPT SHOP\Desktop\HOP 49\HOP 49\HO SO 116`:
+1. Trích xuất chính xác cấu trúc Hộp `49`, Hộp số/Hồ sơ `116` từ đường dẫn.
+2. Nhận diện các khóa thi 26, 27, 28, 29, 30 năm 1996 thuộc nhóm `SQL` (< 31/12/2012). File Khóa 27 đọc được ngày thi `01-04-1996` và dải số bằng `C244501`–`C244608`, sinh đề xuất chuẩn `15.SQL.04.1996.C244501-C244608`. Các file có ngày thi mờ hoặc chữ viết tay trên bìa được gắn cờ `metadata_review` để người dùng rà soát trên panel duyệt trước khi lưu, bảo đảm không sinh sai tên.
+3. Kiểm tra trọn vẹn cả 3 nhóm thời gian: `SQL` (tháng/năm thi + dải số bằng), `QĐTT` (phần số quyết định + ngày ký quyết định), `QĐSH` (phần số quyết định + ngày sát hạch). Sổ tổng hợp cấp tỉnh ghi đúng ngày ký ở QĐTT và ngày sát hạch ở QĐSH.
+4. Đạt 100% các bài kiểm tra tình huống biên: PDF dài 42 trang không nghẽn tài nguyên, PDF hỏng ghi log chẩn đoán có file/trang/bước, cột GPLX trống đề xuất `A000000-A000000`, danh sách độc lập tách biệt, tên file trùng chặn ghi đè bảo vệ file gốc, sổ Excel đang mở/khóa thực hiện rollback nguyên tử và thử lại thành công.
+5. Kiểm tra đóng gói bàn giao: `Build_So_Hoa_GPLX.bat` và `build_portable.py` tạo file `So Hoa GPLX.zip` (~208MB) chứa duy nhất một thư mục gốc `So Hoa GPLX/` gồm `Chay_Ngay.bat`, `Xem_Nhat_Ky.bat`, `HUONG_DAN_SU_DUNG.txt`, `app/GPLX_SoHoa_TraCuu.exe` và kho `DuLieuSoHoa_GPLS/`. Giải nén sang thư mục tạm độc lập kiểm chứng toàn bộ file khởi động và thư mục hoạt động chuẩn xác.
+6. Toàn bộ 51 bài kiểm tra tự động của hệ thống đều đạt (100% OK).
+
 ## Trình tự và điểm duyệt
 
-Phase 1–3 xây nền cho cách đọc hồ sơ và tên đề xuất. Phase 4 dùng kết quả đó để hoàn thành luồng duyệt theo folder. Phase 5 dùng lại dữ liệu bảng để xuất Excel và giữ khả năng tra cứu. Phase 6 xác nhận các luồng hoạt động cùng nhau.
-
-Chốt bảng mã tỉnh và bộ PDF đại diện khi bắt đầu triển khai các phase liên quan. Sau khi bạn duyệt tài liệu này, dùng Ponytail để triển khai theo thứ tự trên.
+Phase 1–3 xây nền cho cách đọc hồ sơ và tên đề xuất. Phase 4 dùng kết quả đó để hoàn thành luồng duyệt theo folder. Phase 5 dùng lại dữ liệu bảng để xuất Excel và giữ khả năng tra cứu. Phase 6 xác nhận các luồng hoạt động cùng nhau trên dữ liệu đại diện và nghiệm thu gói bàn giao. Tất cả 6 Phase đã hoàn thành xuất sắc và sẵn sàng sử dụng.
