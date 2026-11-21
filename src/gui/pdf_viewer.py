@@ -7,6 +7,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 from typing import Optional
 import pypdfium2 as pdfium
+from src.pdf_processor import PDFIUM_LOCK, render_pdf_page
 
 class PDFViewerFrame(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
@@ -101,19 +102,16 @@ class PDFViewerFrame(ctk.CTkFrame):
     def load_pdf(self, pdf_path: str, initial_page: int = 1):
         self.pdf_path = pdf_path
         try:
-            if self.pdf_doc:
-                self.pdf_doc.close()
-                self.pdf_doc = None
-            self.pdf_doc = pdfium.PdfDocument(pdf_path)
-            self.total_pages = len(self.pdf_doc)
+            self.close_pdf()
+            with PDFIUM_LOCK:
+                self.pdf_doc = pdfium.PdfDocument(pdf_path)
+                self.total_pages = len(self.pdf_doc)
             self.current_page_idx = max(0, min(initial_page - 1, self.total_pages - 1))
             self.rotation_angle = 0
             self.zoom_level = 1.0
             self._render_current_page()
         except Exception as e:
-            if self.pdf_doc:
-                self.pdf_doc.close()
-                self.pdf_doc = None
+            self.close_pdf()
             self.canvas.delete("all")
             self.canvas.create_text(250, 150, text=f"Lỗi khi đọc file PDF: {e}", fill="red", font=("Segoe UI", 11))
 
@@ -121,17 +119,7 @@ class PDFViewerFrame(ctk.CTkFrame):
         if not self.pdf_doc or self.total_pages == 0:
             return
 
-        page = self.pdf_doc[self.current_page_idx]
-        base_dpi = 150
-        scale = (base_dpi / 72.0) * self.zoom_level
-        try:
-            bitmap = page.render(scale=scale)
-            try:
-                pil_img = bitmap.to_pil()
-            finally:
-                bitmap.close()
-        finally:
-            page.close()
+        pil_img = render_pdf_page(self.pdf_doc, self.current_page_idx, dpi=150 * self.zoom_level)
 
         if self.rotation_angle != 0:
             pil_img = pil_img.rotate(self.rotation_angle, expand=True)
@@ -158,8 +146,23 @@ class PDFViewerFrame(ctk.CTkFrame):
 
     def close_pdf(self):
         if self.pdf_doc:
-            self.pdf_doc.close()
-            self.pdf_doc = None
+            with PDFIUM_LOCK:
+                self.pdf_doc.close()
+                self.pdf_doc = None
+
+    def clear_preview(self):
+        self.close_pdf()
+        self.pdf_path = None
+        self.total_pages = 0
+        self.current_page_idx = 0
+        self.current_pil_img = None
+        self.tk_image_ref = None
+        self.canvas.delete("all")
+        self.canvas.create_text(200, 150, text="Chưa nạp tệp PDF scan", font=("Segoe UI", 13, "italic"), fill="gray")
+        self.canvas.configure(scrollregion=(0, 0, 0, 0))
+        self.lbl_page.configure(text="Trang 0 / 0")
+        self.btn_prev.configure(state="disabled")
+        self.btn_next.configure(state="disabled")
 
     def prev_page(self):
         if self.current_page_idx > 0:

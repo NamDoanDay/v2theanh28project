@@ -4,28 +4,134 @@ Coordinates PDF rendering, OCR, parsing, naming, and Excel export.
 """
 import os
 import shutil
-from typing import Dict, Any, List
-from src.pdf_processor import render_pdf_to_images
+from copy import deepcopy
+from filecmp import cmp
+from functools import lru_cache
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+import openpyxl
+from src.pdf_processor import open_pdf, page_count, read_pdf_page_text, render_pdf_page
 from src.ocr_engine import run_ocr
-from src.cover_parser import parse_cover_page_text
-from src.table_extractor import cluster_boxes_into_rows
-from src.naming_rules import build_dossier_filename
+from src.cover_parser import parse_cover_ocr, parse_cover_page_text
+from src.table_extractor import LicenseTableExtractor, measure_page_grid, table_citizens
+from src.naming_rules import STANDARD_DOSSIER_PDF, is_valid_windows_filename_stem, propose_dossier_filename
 from src.excel_generator import generate_excel_companion
-from src.folder_parser import parse_folder_hierarchy, find_province_root_dir
+from src.folder_parser import parse_folder_hierarchy, find_province_root_dir, folder_review_location
 from src.sequence_analyzer import analyze_license_sequences
-from src.master_summary import update_or_append_summary_entry
+from src.master_summary import (
+    edit_master_summary, read_rename_records, record_folder_rename, summary_rows_by_name,
+    update_or_append_summary_entry, write_summary_entry,
+)
 from src.database import DatabaseManager
-from src.config import DEFAULT_OUTPUT_DIR
+from src.config import PROVINCE_CODES
 from src.logger import get_logger
 
 logger = get_logger(__name__)
 
-def process_dossier_pdf(pdf_path: str, default_province: str = "15") -> Dict[str, Any]:
+
+def _read_page_ocr(pdf, index):
+    with render_pdf_page(pdf, index) as image:
+        result, _ = run_ocr(image)
+        return result, image.size
+
+
+def _read_opening_page(pdf):
+    from pypdfium2 import PdfiumError
+
+    # A damaged or partial text layer is common in scanned decisions.
+    try:
+        text = read_pdf_page_text(pdf, 0)
+    except PdfiumError:
+        logger.warning("Could not read opening page text layer", exc_info=True)
+        text = ""
+    native = parse_cover_page_text(text)
+    if native["document_type"] != "unknown" and not native["metadata_review"]:
+        return native, None
+
+    raw_ocr = _read_page_ocr(pdf, 0)
+    scan = parse_cover_ocr(raw_ocr[0], raw_ocr[1][1])
+    if native["document_type"] == "unknown":
+        return scan, raw_ocr
+    if native["document_type"] == scan["document_type"]:
+        for field in ("province_code", "province_name", "exam_date", "decision_date", "decision_number",
+                      "license_class", "course", "exam_location", "day", "month", "year"):
+            if not native[field] and scan[field]:
+                native[field] = scan[field]
+                native["metadata_review"].pop(field, None)
+                if field in scan["metadata_pages"]:
+                    native["metadata_pages"][field] = scan["metadata_pages"][field]
+    return native, raw_ocr
+
+
+def _pdf_cache_key(pdf_path):
+    path = os.path.realpath(pdf_path)
+    stat = os.stat(path)
+    return path, stat.st_size, stat.st_mtime_ns
+
+
+@lru_cache(maxsize=8)
+def _cached_opening(key):
+    with open_pdf(key[0]) as pdf:
+        total = page_count(pdf)
+        if not total:
+            raise ValueError("File PDF rỗng không có trang nào.")
+        cover, opening_ocr = _read_opening_page(pdf)
+        return cover, total, opening_ocr
+
+
+@lru_cache(maxsize=4)
+def _cached_tables(key):
+    _, total, opening_ocr = _cached_opening(key)
+    extractor = LicenseTableExtractor()
+    with open_pdf(key[0]) as pdf:
+        for index in range(total):
+            logger.info("Reading GPLX table candidates on page %d/%d: %s", index + 1, total, key[0])
+            with render_pdf_page(pdf, index) as image:
+                result = opening_ocr[0] if index == 0 and opening_ocr is not None else run_ocr(image)[0]
+                extractor.read_page(result, image.size, measure_page_grid(image), index + 1)
+    return extractor.tables
+
+
+def summarize_license_table(table):
+    """Use the physical endpoints. Unknown cells and verified blanks have different results."""
+    rows = table["rows"] if table else []
+    unresolved = table.get("unresolved_pages", []) if table else []
+    known_count = bool(rows) and not unresolved and all(row["identity_confident"] for row in rows)
+    blank = bool(rows) and all(row["license_state"] == "blank" for row in rows)
+    complete = known_count and all(row["license_state"] == "valid" for row in rows)
+    sequence = analyze_license_sequences([row["license_number"] for row in rows] if complete else [])
+    if not rows:
+        warning = "Chưa xác định được danh sách GPLX."
+    elif unresolved:
+        warning = f"Cần đối chiếu trang {', '.join(map(str, unresolved))} để xác định danh sách có tiếp tục hay không."
+    elif not known_count:
+        warning = "Có dòng chưa đọc rõ họ tên. Hãy đối chiếu số lượng GPLX."
+    elif blank:
+        warning = "Cột số GPLX của danh sách đang trống."
+    elif any(row["license_state"] == "unknown_column" for row in rows):
+        warning = "Chưa xác định được cột số GPLX."
+    elif not complete:
+        warning = "Có ô số GPLX trống hoặc đọc chưa rõ. Hãy đối chiếu danh sách."
+    else:
+        warning = ""
+    return {
+        "first_license_no": rows[0]["license_number"] if rows else "",
+        "last_license_no": rows[-1]["license_number"] if rows and not unresolved else "",
+        "license_column_empty": blank and known_count,
+        "license_sequence": sequence["sequence_summary"],
+        "status_note": "Cần rà soát" if warning and not blank else sequence["status"],
+        "total_licenses": len(rows) if known_count else None,
+        "table_review": warning,
+        "sequence_analysis": sequence,
+    }
+
+
+def process_dossier_pdf(pdf_path: str, default_province: str = "", *, rename_only: bool = False) -> Dict[str, Any]:
     """
     Processes a raw digitized PDF:
-    1. Extracts images
-    2. Runs OCR on Cover page (page 1)
-    3. Runs OCR and table extraction on subsequent pages
+    1. Reads document metadata on the opening page
+    2. Reads OCR and table data one page at a time
     4. Analyzes license sequences and continuity
     5. Extracts folder metadata (Hộp, Hộp số)
     6. Generates proposed standard filename
@@ -34,86 +140,188 @@ def process_dossier_pdf(pdf_path: str, default_province: str = "15") -> Dict[str
         raise FileNotFoundError(f"File not found: {pdf_path}")
 
     # 0. Extract folder hierarchy
-    folder_info = parse_folder_hierarchy(pdf_path)
+    folder_info = folder_review_location(pdf_path) if rename_only else parse_folder_hierarchy(pdf_path)
 
-    # 1. Render pages
-    pages = render_pdf_to_images(pdf_path, dpi=200)
-    total_pages = len(pages)
-    if total_pages == 0:
-        raise ValueError("PDF file is empty")
-
-    # 2. Process Page 1: Cover Page
-    cover_img = pages[0]
-    cover_ocr_res, cover_time = run_ocr(cover_img)
-    cover_text = " ".join([str(item[1]) for item in cover_ocr_res])
-    cover_meta = parse_cover_page_text(cover_text)
+    key = _pdf_cache_key(pdf_path)
+    cached_cover, total_pages, _ = _cached_opening(key)
+    cover_meta = deepcopy(cached_cover)
+    tables = deepcopy(_cached_tables(key))
+    all_citizens = [] if rename_only else [row for table in tables for row in table_citizens(table)]
     
-    if default_province and default_province != "auto":
-        cover_meta["province_code"] = default_province
+    cover_meta["suggested_province_code"] = cover_meta["province_code"]
+    cover_meta["province_code"] = default_province if default_province != "auto" else ""
+    cover_meta["province_name"] = next(
+        (p["name"] for p in PROVINCE_CODES if p["code"] == cover_meta["province_code"]), ""
+    )
 
     # Attach folder metadata
     cover_meta["box"] = folder_info.get("box", "48")
     cover_meta["box_number"] = folder_info.get("box_number", "115")
 
-    # 3. Process Table Pages (Page 2 to Page N)
-    all_citizens: List[Dict[str, Any]] = []
-    
-    table_pages = pages[1:] if total_pages > 1 else pages
-    start_page_num = 2 if total_pages > 1 else 1
-
-    for idx, page_img in enumerate(table_pages):
-        page_num = start_page_num + idx
-        w, h = page_img.size
-        tbl_ocr_res, tbl_time = run_ocr(page_img)
-        page_citizens = cluster_boxes_into_rows(tbl_ocr_res, w, h)
-        for c in page_citizens:
-            c["page_number"] = page_num
-        all_citizens.extend(page_citizens)
-
-    # Đánh số thứ tự STT lần lượt liên tục từ 1 đến N cho toàn bộ danh sách trong file
-    for idx, c in enumerate(all_citizens, start=1):
-        c["stt"] = idx
-
-    # 4. Analyze License Sequences and Continuity
-    license_list = [c.get("license_number", "") for c in all_citizens if c.get("license_number")]
-    seq_analysis = analyze_license_sequences(license_list)
-
-    first_license = "A000000"
-    last_license = "C999999"
-    
-    if license_list:
-        first_license = license_list[0]
-        last_license = license_list[-1]
-
-    cover_meta["first_license_no"] = first_license
-    cover_meta["last_license_no"] = last_license
-    cover_meta["license_sequence"] = seq_analysis["sequence_summary"]
-    cover_meta["status_note"] = seq_analysis["status"]
-    cover_meta["total_licenses"] = len(all_citizens)
+    stats = summarize_license_table(tables[0] if len(tables) == 1 else None)
+    seq_analysis = stats.pop("sequence_analysis")
+    cover_meta.update(stats)
+    if len(tables) > 1:
+        cover_meta["table_review"] = "Có nhiều danh sách GPLX. Hãy chọn danh sách dùng để đặt tên."
     cover_meta["total_pages"] = total_pages
 
     # 5. Generate Standardized Filename
-    proposed_name = build_dossier_filename(
-        province_code=cover_meta.get("province_code", "15"),
-        doc_type="SQL",
-        month=cover_meta.get("month", "03"),
-        year=cover_meta.get("year", "1996"),
-        first_license=first_license,
-        last_license=last_license
+    proposal = propose_dossier_filename(
+        province_code=cover_meta["province_code"],
+        suggested_province_code=cover_meta["suggested_province_code"],
+        exam_date=cover_meta["exam_date"],
+        decision_number=cover_meta.get("decision_number", ""),
+        decision_date=cover_meta.get("decision_date", ""),
+        first_license_no=cover_meta["first_license_no"],
+        last_license_no=cover_meta["last_license_no"],
+        license_column_empty=cover_meta["license_column_empty"],
     )
 
     return {
         "original_path": pdf_path,
         "original_filename": os.path.basename(pdf_path),
-        "proposed_filename": proposed_name,
+        "proposed_filename": proposal.filename or "",
         "cover_meta": cover_meta,
         "citizens": all_citizens,
+        "tables": tables,
         "total_citizens": len(all_citizens),
         "total_pages": total_pages,
         "sequence_analysis": seq_analysis,
         "folder_info": folder_info,
+        "rename_only": rename_only,
+        "source_stamp": key[1:],
         "status": "READY_FOR_REVIEW"
     }
+
+
+def _copy_named_pdf(source, target, *, allow_existing=True):
+    if os.path.normcase(os.path.abspath(source)) == os.path.normcase(os.path.abspath(target)):
+        return False
+    created = False
+    try:
+        with open(source, "rb") as original, open(target, "xb") as renamed:
+            created = True
+            shutil.copyfileobj(original, renamed)
+        shutil.copystat(source, target)
+        return True
+    except FileExistsError:
+        if not allow_existing or not cmp(source, target, shallow=False):
+            raise FileExistsError(f"Đã có PDF mang tên {os.path.basename(target)}. Hãy kiểm tra hoặc chọn tên khác.")
+        return False
+    except OSError:
+        if created:
+            os.unlink(target)
+        raise
+
+
+_SUMMARY_PREFIX = "So_Theo_Doi_Day_So_GPLX_"
+
+
+def list_folder_review_pdfs(folder_path):
+    """List sources and registered results without queuing a renamed copy as a new PDF."""
+    paths = sorted(
+        (str(path.resolve()) for path in Path(folder_path).rglob("*") if path.suffix.lower() == ".pdf" and path.is_file()),
+        key=str.casefold,
+    )
+    roots = {folder_review_location(path)["province_root"] for path in paths}
+    registration = {}
+    outputs = set()
+    for root in roots:
+        root_path = Path(root)
+        for summary in root_path.glob(f"{_SUMMARY_PREFIX}[0-9][0-9].xlsx"):
+            try:
+                workbook = openpyxl.load_workbook(summary, read_only=True)
+                try:
+                    if not (records := read_rename_records(workbook)):
+                        continue
+                    names = summary_rows_by_name(workbook)
+                    for filename, source, target in records:
+                        if len(names.get(filename.strip().casefold().removesuffix(".pdf"), [])) != 1:
+                            continue
+                        original = (root_path / source).resolve()
+                        renamed = (root_path / target).resolve()
+                        if not original.is_relative_to(root_path) or not renamed.is_relative_to(root_path):
+                            continue
+                        if renamed.is_file():
+                            source_key = os.path.normcase(str(original))
+                            output_key = os.path.normcase(str(renamed))
+                            registration[source_key] = str(renamed)
+                            if source_key != output_key:
+                                outputs.add(output_key)
+                finally:
+                    workbook.close()
+            except Exception:
+                logger.warning("Could not read registered folder PDFs from %s", summary, exc_info=True)
+    return [(path, registration.get(os.path.normcase(path))) for path in dict.fromkeys(paths)
+            if os.path.normcase(path) not in outputs]
+
+
+def _summary_record(final_filename, cover_meta, total_citizens, *, folder_review=False):
+    exam_date = cover_meta.get("exam_date", "")
+    if folder_review and cover_meta.get("dossier_group") == "QĐTT":
+        exam_date = cover_meta.get("decision_date", "")
+    sequence = cover_meta.get("license_sequence", "")
+    first = cover_meta.get("first_license_no")
+    last = cover_meta.get("last_license_no")
+    if not sequence and first and last and (folder_review or "license_sequence" not in cover_meta):
+        sequence = f"Đầu {first} · Cuối {last}" if folder_review else f"{first}-{last}"
+    return {
+        "book_type": cover_meta.get("book_type", "Sổ gốc cấp bằng lái xe cơ giới đường bộ"),
+        "cover_date": exam_date,
+        "pdf_filename": final_filename,
+        "box": cover_meta.get("box", "48"),
+        "box_number": cover_meta.get("box_number", "115"),
+        "license_class": cover_meta.get("license_class", "A1"),
+        "total_licenses": cover_meta.get("total_licenses", total_citizens),
+        "license_sequence": sequence,
+        "total_pages": cover_meta.get("total_pages", 1),
+        "status_note": cover_meta.get("status_note", "Đủ"),
+    }
+
+
+def commit_folder_dossier(original_pdf_path, final_filename, cover_meta, *, source_stamp=None):
+    """Publish the approved PDF and update its province workbook without exporting individual rows."""
+    if not is_valid_windows_filename_stem(final_filename):
+        raise ValueError("Tên file không hợp lệ cho Windows. Nhập tên và bỏ phần đuôi .pdf.")
+    province = cover_meta.get("province_code")
+    if province not in {p["code"] for p in PROVINCE_CODES}:
+        raise ValueError("Hãy chọn mã tỉnh lưu trữ hợp lệ.")
+    source, *current_stamp = _pdf_cache_key(original_pdf_path)
+    if source_stamp is not None and tuple(current_stamp) != tuple(source_stamp):
+        raise ValueError("PDF gốc đã thay đổi sau khi đọc. Hãy chọn lại thư mục để đọc PDF rồi xác nhận.")
+    province_root = folder_review_location(source)["province_root"]
+    target = os.path.join(os.path.dirname(source), f"{final_filename}.pdf")
+    summary_path = os.path.join(province_root, f"{_SUMMARY_PREFIX}{province}.xlsx")
+
+    copied = False
+    try:
+        logger.info("Folder review: checking archive name for %s -> %s", source, target)
+        with edit_master_summary(summary_path) as workbook:
+            linked = record_folder_rename(
+                workbook, final_filename, os.path.relpath(source, province_root), os.path.relpath(target, province_root),
+            )
+            copied = _copy_named_pdf(source, target, allow_existing=linked)
+            logger.info("Folder review: updating summary %s for %s", summary_path, source)
+            write_summary_entry(workbook, _summary_record(final_filename, cover_meta, None, folder_review=True))
+    except Exception as exc:
+        if copied:
+            try:
+                if os.path.exists(target):
+                    if not cmp(source, target, shallow=False):
+                        raise OSError("PDF đích đã bị thay đổi trong lúc lưu.")
+                    os.unlink(target)
+                    logger.info("Folder review: rolled back new PDF %s", target)
+            except OSError:
+                logger.exception("Folder review: could not remove incomplete output %s", target)
+                raise OSError(f"Chưa lưu được sổ tổng hợp và không thể thu hồi bản sao {os.path.basename(target)}. "
+                              "Hãy đóng PDF đích, chuyển bản sao sang vị trí khác rồi thử lại.") from exc
+        if isinstance(exc, PermissionError):
+            raise PermissionError(f"Không ghi được PDF hoặc sổ {os.path.basename(summary_path)}. "
+                                  "Hãy đóng sổ trong Excel và kiểm tra quyền ghi rồi thử lại.") from exc
+        raise
+    logger.info("Folder review: saved PDF and summary for %s", source)
+    return {"pdf_path": target, "master_summary_path": summary_path}
+
 
 def commit_dossier(
     original_pdf_path: str,
@@ -129,6 +337,9 @@ def commit_dossier(
     2. Generates companion Excel in the same folder.
     3. Updates Province Master Summary Excel: So_Theo_Doi_Day_So_GPLX_<prov>.xlsx at Province root folder.
     """
+    if not is_valid_windows_filename_stem(final_filename):
+        raise ValueError("Tên file không hợp lệ cho Windows. Nhập tên và bỏ phần đuôi .pdf.")
+
     # If output_dir is not specified, save in-place directly in the uploaded file's folder
     if not output_dir:
         output_dir = os.path.dirname(os.path.abspath(original_pdf_path))
@@ -139,8 +350,7 @@ def commit_dossier(
     target_xlsx = os.path.join(output_dir, f"{final_filename}.xlsx")
     
     # Safe copy without deleting original file
-    if os.path.abspath(original_pdf_path) != os.path.abspath(target_pdf):
-        shutil.copy2(original_pdf_path, target_pdf)
+    _copy_named_pdf(original_pdf_path, target_pdf)
     
     # Generate matching Excel companion
     generate_excel_companion(cover_meta, citizens, target_xlsx)
@@ -148,23 +358,10 @@ def commit_dossier(
     # Master summary update: place at province root folder
     prov_code = cover_meta.get("province_code", "15")
     prov_root = find_province_root_dir(original_pdf_path)
-    summary_filename = f"So_Theo_Doi_Day_So_GPLX_{prov_code}.xlsx"
+    summary_filename = f"{_SUMMARY_PREFIX}{prov_code}.xlsx"
     summary_path = os.path.join(prov_root, summary_filename)
 
-    summary_record = {
-        "book_type": cover_meta.get("book_type", "Sổ gốc cấp bằng lái xe cơ giới đường bộ"),
-        "cover_date": cover_meta.get("exam_date", ""),
-        "pdf_filename": final_filename,
-        "box": cover_meta.get("box", "48"),
-        "box_number": cover_meta.get("box_number", "115"),
-        "license_class": cover_meta.get("license_class", "A1"),
-        "total_licenses": len(citizens),
-        "license_sequence": cover_meta.get("license_sequence", f"{cover_meta.get('first_license_no')}-{cover_meta.get('last_license_no')}"),
-        "total_pages": cover_meta.get("total_pages", 1),
-        "status_note": cover_meta.get("status_note", "Đủ")
-    }
-
-    update_or_append_summary_entry(summary_path, summary_record)
+    update_or_append_summary_entry(summary_path, _summary_record(final_filename, cover_meta, len(citizens)))
 
     # 4. Zero-Config Database Sync into SQLite
     try:
@@ -189,152 +386,58 @@ def commit_dossier(
         "final_filename": final_filename
     }
 
-def fast_extract_rename_metadata(pdf_path: str, default_province: str = "15") -> str:
-    """
-    Thuật toán trích xuất siêu tốc tối ưu riêng cho chức năng đổi tên file (theo folder):
-    - Đọc Trang 1 (Bìa) để lấy Mã tỉnh, Tháng, Năm của ngày thi/ngày ký sổ.
-    - Đọc Trang 2 (Trang danh sách đầu tiên) tại Hàng 1 để lấy Số bằng đầu (STT 1).
-    - Đọc Trang cuối (Trang danh sách cuối) tại Hàng cuối để lấy Số bằng cuối (STT cuối).
-    - BỎ QUA HOÀN TOÀN TẤT CẢ CÁC TRANG Ở GIỮA (tiết kiệm 90% thời gian xử lý và CPU).
-    - Nếu ô đầu/cuối bị mờ/trống: Tự động quét dòng kế cận gần nhất để đảm bảo luôn lấy được số bằng chuẩn.
-    """
-    import re
-    from src.pdf_processor import get_pdf_page_count, render_specific_pdf_pages
-    from src.naming_rules import normalize_license_code
-
+def fast_extract_rename_metadata(pdf_path: str, default_province: str = "") -> str:
+    """Read the header first. SQL names also need the endpoints of a unique GPLX list."""
     logger.info("Folder rename: opening PDF %s", pdf_path)
-    total_pages = get_pdf_page_count(pdf_path)
-    if total_pages == 0:
-        raise ValueError("File PDF rỗng không có trang nào.")
-    logger.info("Folder rename: PDF has %d pages: %s", total_pages, pdf_path)
+    key = _pdf_cache_key(pdf_path)
+    cover_meta, total_pages, _ = _cached_opening(key)
+    logger.info("Folder rename: PDF has %d pages, type=%s, review_fields=%s: %s",
+                total_pages, cover_meta["document_type"], list(cover_meta["metadata_review"]), pdf_path)
+    fields = {
+        "province_code": default_province,
+        "suggested_province_code": cover_meta["province_code"],
+        "exam_date": cover_meta["exam_date"],
+        "decision_number": cover_meta["decision_number"],
+        "decision_date": cover_meta["decision_date"],
+    }
+    proposal = propose_dossier_filename(**fields)
+    if proposal.filename:
+        return proposal.filename
+    if proposal.group != "SQL" or proposal.errors.keys() - {"first_license_no", "last_license_no"}:
+        raise ValueError("Cần rà soát: " + " ".join(proposal.errors.values()))
 
-    # Chỉ render tối đa 3 trang cần thiết
-    if total_pages == 1:
-        needed_indices = [0]
-    elif total_pages == 2:
-        needed_indices = [0, 1]
-    else:
-        needed_indices = [0, 1, total_pages - 1]
-
-    rendered_pages = render_specific_pdf_pages(pdf_path, needed_indices, dpi=200)
-    logger.info("Folder rename: rendered pages %s: %s", [i + 1 for i in rendered_pages], pdf_path)
-
-    # 1. Đọc Trang bìa (Trang 1 - index 0)
-    cover_img = rendered_pages[0]
-    cover_ocr_res, _ = run_ocr(cover_img)
-    cover_text = " ".join([str(item[1]) for item in cover_ocr_res])
-    cover_meta = parse_cover_page_text(cover_text)
-    logger.info("Folder rename: cover OCR complete: %s", pdf_path)
-
-    folder_info = parse_folder_hierarchy(pdf_path)
-    prov_code = cover_meta.get("province_code") or folder_info.get("province_code") or default_province or "15"
-
-    exam_date = cover_meta.get("exam_date", "")
-    month, year = "01", "1996"
-    if exam_date and "-" in exam_date:
-        parts = exam_date.split("-")
-        if len(parts) >= 3:
-            month = parts[1].strip()
-            year = parts[2].strip()
-        elif len(parts) == 2:
-            month = parts[0].strip()
-            year = parts[1].strip()
-    else:
-        m_date = re.search(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})", cover_text)
-        if m_date:
-            month = m_date.group(2)
-            year = m_date.group(3)
-        else:
-            m_my = re.search(r"(\d{1,2})[\/\-\.](\d{4})", cover_text)
-            if m_my:
-                month = m_my.group(1)
-                year = m_my.group(2)
-
-    def extract_license_from_page(img, direction="first"):
-        logger.info("Folder rename: reading license page direction=%s file=%s", direction, pdf_path)
-        w, h = img.size
-        ocr_res, _ = run_ocr(img)
-        logger.info("Folder rename: license OCR complete direction=%s file=%s", direction, pdf_path)
-        rows = cluster_boxes_into_rows(ocr_res, w, h)
-        if direction == "last":
-            rows = list(reversed(rows))
-
-        # Quét lần lượt các dòng (dòng 1 trước, nếu mờ thì quét dòng kế cận)
-        for r in rows:
-            lic = r.get("license_number", "")
-            if lic and lic != "UNKNOWN" and len(lic) >= 5:
-                return lic
-
-        # Cứu nguy: Quét toàn bộ các box text trên trang
-        box_texts = [str(item[1]).strip() for item in ocr_res]
-        if direction == "last":
-            box_texts = list(reversed(box_texts))
-
-        for text in box_texts:
-            m = re.search(r"([A-Za-z]{1,2}\s*[0-9]{5,7})", text)
-            if m:
-                return normalize_license_code(m.group(1))
-
-        return None
-
-    # 2. Đọc Trang 2 (Trang danh sách đầu tiên) -> Số bằng đầu
-    first_license = "A000000"
-    if total_pages >= 2:
-        p2_img = rendered_pages[1]
-        found = extract_license_from_page(p2_img, direction="first")
-        if found:
-            first_license = found
-    else:
-        found = extract_license_from_page(cover_img, direction="first")
-        if found:
-            first_license = found
-
-    # 3. Đọc Trang cuối -> Số bằng cuối
-    last_license = first_license
-    if total_pages >= 3:
-        last_idx = total_pages - 1
-        last_img = rendered_pages[last_idx]
-        found = extract_license_from_page(last_img, direction="last")
-        if found:
-            last_license = found
-    elif total_pages == 2:
-        p2_img = rendered_pages[1]
-        found = extract_license_from_page(p2_img, direction="last")
-        if found:
-            last_license = found
-
-    return build_dossier_filename(
-        province_code=prov_code,
-        doc_type="SQL",
-        month=month,
-        year=year,
-        first_license=first_license,
-        last_license=last_license
+    tables = _cached_tables(key)
+    if len(tables) != 1:
+        reason = "Có nhiều danh sách GPLX. Hãy chọn danh sách trong màn hình duyệt." if tables else "Chưa tìm thấy danh sách GPLX."
+        raise ValueError("Cần rà soát: " + reason)
+    stats = summarize_license_table(tables[0])
+    proposal = propose_dossier_filename(
+        **fields,
+        first_license_no=stats["first_license_no"],
+        last_license_no=stats["last_license_no"],
+        license_column_empty=stats["license_column_empty"],
     )
+    if proposal.filename is None:
+        raise ValueError("Cần rà soát: " + " ".join(proposal.errors.values()))
+    return proposal.filename
 
 def batch_copy_and_rename_folder_pdfs(
     folder_path: str,
-    default_province: str = "15",
+    default_province: str = "",
     progress_callback = None
 ) -> Dict[str, Any]:
     """
-    Scans a folder for raw scanned PDF files, extracts metadata and license ranges via OCR,
-    and copies each file into a new file named [Mã tỉnh].[SQL].[Tháng].[Năm].[Số đầu]-[Số cuối].pdf.
+    Scans a folder for raw PDFs and copies files with sufficient OCR data under their proposed names.
     Preserves 100% of original files without modifying them. Does not generate companion Excel files.
     """
-    import shutil
-    import re
     import time
 
     logger.info("Folder rename started: folder=%s province=%s", folder_path, default_province)
 
-    # Pattern identifying files that are already renamed according to standard format
-    STANDARD_PATTERN = re.compile(r"^\d{2}\.SQL\.\d{2}\.\d{4}\..*\.pdf$", re.IGNORECASE)
-
     found_pdfs = []
     for root, _, files in os.walk(folder_path):
         for f in files:
-            if f.lower().endswith(".pdf") and not STANDARD_PATTERN.match(f):
+            if f.lower().endswith(".pdf") and not STANDARD_DOSSIER_PDF.fullmatch(f):
                 found_pdfs.append(os.path.join(root, f))
     found_pdfs.sort()
 
@@ -359,8 +462,7 @@ def batch_copy_and_rename_folder_pdfs(
             new_pdf_path = os.path.join(parent_dir, f"{new_filename}.pdf")
 
             # Copy to new file, keeping original intact
-            if os.path.abspath(pdf_path) != os.path.abspath(new_pdf_path):
-                shutil.copy2(pdf_path, new_pdf_path)
+            _copy_named_pdf(pdf_path, new_pdf_path)
 
             results.append({
                 "original_path": pdf_path,

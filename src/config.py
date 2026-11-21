@@ -77,17 +77,14 @@ PROVINCE_CODES = load_province_codes()
 def find_province_code_by_text(text: str) -> str:
     """
     Search for matching province name or keywords from extracted text.
-    Returns 2-digit code (e.g. '15') or fallback '15'.
+    Returns a province suggestion only when the text matches one code.
     """
     if not text:
-        return "15" # Default fallback
+        return ""
     
     text_lower = text.lower()
-    for prov in PROVINCE_CODES:
-        for kw in prov.get("keywords", []):
-            if kw in text_lower:
-                return prov["code"]
-    return "15"
+    matches = {prov["code"] for prov in PROVINCE_CODES if any(kw in text_lower for kw in prov.get("keywords", []))}
+    return next(iter(matches)) if len(matches) == 1 else ""
 
 def get_handover_root_dir() -> str:
     """
@@ -223,14 +220,15 @@ def init_digitization_structure(root_dir: str = None) -> str:
             "   │   └── HOP_[Số_Hộp]/        (Ví dụ: HOP_01, HOP_02, ...)\r\n"
             "   │       └── HoSo_[Số_Hồ_Sơ]/ (Ví dụ: HoSo_01, HoSo_02, ...)\r\n"
             "   │           └── [Các file scan PDF]\r\n\r\n"
-            "2. HƯỚNG DẪN THỰC HIỆN ĐỔI TÊN HÀNG LOẠT:\r\n"
+            "2. HƯỚNG DẪN RÀ SOÁT VÀ ĐỔI TÊN PDF THEO THƯ MỤC:\r\n"
             "   - Đặt các file PDF scan gốc vào thư mục HoSo tương ứng.\r\n"
             "   - Mở ứng dụng, chọn tab 'Số hóa & Đổi tên hồ sơ'.\r\n"
             "   - Nhấn nút '📁 Đổi tên file (theo folder)'.\r\n"
             "   - Chọn thư mục HoSo vừa đặt file PDF.\r\n"
-            "   - Hệ thống sẽ tự động quét, đọc bìa và bảng, sau đó tạo file PDF mới\r\n"
-            "     được đổi tên chuẩn xác theo quy định: [Mã tỉnh].[SQL].[Tháng].[Năm].[Số đầu]-[Số cuối].pdf\r\n"
-            "     (Đồng thời giữ nguyên 100% file gốc ban đầu để đối chiếu an toàn tuyệt đối).\r\n"
+            "   - Chọn PDF ở cột trái, xem bản scan ở giữa và rà soát thông tin ở cột phải.\r\n"
+            "   - Bấm 'Xác nhận lưu PDF và sổ tổng hợp' sau khi kiểm tra tên đề xuất.\r\n"
+            "   - Ứng dụng giữ PDF gốc, lưu bản sao cạnh nguồn và cập nhật sổ tổng hợp của tỉnh.\r\n"
+            "   - Nếu sổ đang mở trong Excel, đóng sổ rồi xác nhận lại.\r\n"
         )
         try:
             with open(readme_path, "w", encoding="utf-8") as f:

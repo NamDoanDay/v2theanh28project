@@ -8,6 +8,8 @@ E.g.: DuLieu_GPLX/LaoCai/HOP_48/HOP_SO_115/scan_001.pdf
 """
 import os
 import re
+import unicodedata
+from pathlib import Path
 from typing import Dict, Any
 
 def extract_clean_number_or_name(folder_name: str) -> str:
@@ -76,3 +78,28 @@ def find_province_root_dir(pdf_path: str) -> str:
             return prov_dir
 
     return abs_dir
+
+
+def folder_review_location(pdf_path: str) -> Dict[str, str]:
+    """Find the province and box fields for folders selected at any archive level."""
+    parent = Path(pdf_path).resolve().parent
+    lineage = [*reversed(parent.parents), parent]
+    root = parent
+    archive_province = None
+    box = box_number = ""
+    for index, folder in enumerate(lineage):
+        key = re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFD", folder.name.casefold()))
+        if key in {"dulieusohoagpls", "dulieusohoagplx", "dulieugplx"} and index + 1 < len(lineage):
+            next_folder = lineage[index + 1]
+            if re.fullmatch(r"0[123]_.*", next_folder.name) and index + 2 < len(lineage):
+                next_folder = lineage[index + 2]
+            root = archive_province = next_folder
+        elif re.fullmatch(r"(?:hopso|hoso)(?:\d+|[a-z][a-z0-9]*)", key):
+            box_number = extract_clean_number_or_name(folder.name)
+            if not box and root == parent:
+                root = folder.parent
+        elif not box and re.fullmatch(r"(?:hop|tu)\d+", key):
+            if not archive_province or archive_province == folder:
+                root = folder.parent
+            box = extract_clean_number_or_name(folder.name)
+    return {"province_root": str(root), "province_folder": root.name, "box": box, "box_number": box_number}

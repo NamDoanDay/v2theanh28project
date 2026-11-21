@@ -19,6 +19,9 @@ import qrcode
 
 from src.database import DatabaseManager
 from src.config import PROVINCE_CODES, get_resource_path
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 def get_lan_ip() -> str:
     """
@@ -205,6 +208,7 @@ class LANServerManager:
         if port:
             self.port = port
 
+        logger.info("Starting LAN server on %s:%s", self.host, self.port)
         app.state.port = self.port
         app.state.host = self.host
 
@@ -213,7 +217,10 @@ class LANServerManager:
             host=self.host,
             port=self.port,
             log_level="warning",
-            access_log=False
+            access_log=False,
+            # Windowed PyInstaller builds have sys.stdout/sys.stderr=None;
+            # Uvicorn's default formatter calls sys.stdout.isatty().
+            log_config=None,
         )
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, daemon=True)
@@ -222,17 +229,20 @@ class LANServerManager:
 
         # Give it a brief moment to bind socket
         time.sleep(0.5)
+        logger.info("LAN server thread started; access URL: %s", self.get_url())
         return self.get_url()
 
     def stop(self):
         """Stops the running server."""
         if self.server and self.is_running:
+            logger.info("Stopping LAN server on port %s", self.port)
             self.server.should_exit = True
             self.is_running = False
             if self.thread and self.thread.is_alive():
                 self.thread.join(timeout=2.0)
             self.server = None
             self.thread = None
+            logger.info("LAN server stopped")
 
     def get_lan_ip(self) -> str:
         return get_lan_ip()

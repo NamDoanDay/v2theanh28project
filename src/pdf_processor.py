@@ -1,70 +1,52 @@
-"""
-PDF processing module: Extract images from PDF pages and manage page rendering.
-Uses pypdfium2 and PIL for high-speed, high-resolution rendering without external dependencies.
-"""
-import os
-from typing import List
-from PIL import Image
+"""PDFium helpers shared by the OCR worker and the preview."""
+from contextlib import closing, contextmanager
+from threading import Lock
+
 import pypdfium2 as pdfium
 
-def render_pdf_to_images(pdf_path: str, dpi: int = 200) -> List[Image.Image]:
-    """
-    Renders all pages of a PDF into PIL Image objects.
-    Default dpi=200 provides ideal balance between OCR accuracy and processing speed.
-    """
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-    
-    pdf = pdfium.PdfDocument(pdf_path)
-    images = []
-    scale = dpi / 72.0  # 72 is standard PDF points per inch
+
+# The preview and OCR worker may use PDFium concurrently, even on different PDFs.
+PDFIUM_LOCK = Lock()
+
+
+@contextmanager
+def open_pdf(pdf_path: str):
+    with PDFIUM_LOCK:
+        pdf = pdfium.PdfDocument(pdf_path)
     try:
-        for index in range(len(pdf)):
-            page = pdf[index]
-            try:
-                bitmap = page.render(scale=scale)
-                try:
-                    images.append(bitmap.to_pil())
-                finally:
-                    bitmap.close()
-            finally:
-                page.close()
+        yield pdf
     finally:
-        pdf.close()
-    return images
+        with PDFIUM_LOCK:
+            pdf.close()
+
+
+def page_count(pdf) -> int:
+    with PDFIUM_LOCK:
+        return len(pdf)
+
+
+def read_pdf_page_text(pdf, index: int) -> str:
+    with PDFIUM_LOCK, closing(pdf[index]) as page, closing(page.get_textpage()) as text_page:
+        return text_page.get_text_bounded()
+
+
+def render_pdf_page(pdf, index: int, dpi: float = 200):
+    with PDFIUM_LOCK, closing(pdf[index]) as page, closing(page.render(scale=dpi / 72.0)) as bitmap:
+        # Some PIL modes share the bitmap's native buffer.
+        return bitmap.to_pil().copy()
+
+
+def render_pdf_to_images(pdf_path: str, dpi: int = 200) -> list:
+    with open_pdf(pdf_path) as pdf:
+        return [render_pdf_page(pdf, index, dpi) for index in range(page_count(pdf))]
+
 
 def get_pdf_page_count(pdf_path: str) -> int:
-    """Returns the total number of pages in the PDF."""
-    pdf = pdfium.PdfDocument(pdf_path)
-    try:
-        return len(pdf)
-    finally:
-        pdf.close()
+    with open_pdf(pdf_path) as pdf:
+        return page_count(pdf)
 
-def render_specific_pdf_pages(pdf_path: str, page_indices: List[int], dpi: int = 200) -> dict:
-    """
-    Renders only the requested page indices (0-based) from a PDF.
-    Saves massive CPU time and memory by skipping unneeded intermediate pages.
-    """
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-    
-    pdf = pdfium.PdfDocument(pdf_path)
-    rendered = {}
-    try:
-        total_pages = len(pdf)
-        scale = dpi / 72.0
-        for idx in page_indices:
-            if 0 <= idx < total_pages:
-                page = pdf[idx]
-                try:
-                    bitmap = page.render(scale=scale)
-                    try:
-                        rendered[idx] = bitmap.to_pil()
-                    finally:
-                        bitmap.close()
-                finally:
-                    page.close()
-    finally:
-        pdf.close()
-    return rendered
+
+def render_specific_pdf_pages(pdf_path: str, page_indices: list[int], dpi: int = 200) -> dict:
+    with open_pdf(pdf_path) as pdf:
+        total = page_count(pdf)
+        return {index: render_pdf_page(pdf, index, dpi) for index in page_indices if 0 <= index < total}

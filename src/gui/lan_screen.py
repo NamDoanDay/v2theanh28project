@@ -12,6 +12,9 @@ from PIL import Image
 
 from src.server.lan_server import lan_server, get_lan_ip
 from src.database import DatabaseManager
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 class LANScreenFrame(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
@@ -215,9 +218,13 @@ class LANScreenFrame(ctk.CTkFrame):
             except ValueError:
                 port = 8080
 
-            url = lan_server.start(port=port)
-            self.refresh_state()
-            messagebox.showinfo("Khởi chạy thành công", f"Máy chủ mạng LAN đã được kích hoạt!\n\nĐường dẫn: {url}")
+            try:
+                url = lan_server.start(port=port)
+                self.refresh_state()
+                messagebox.showinfo("Khởi chạy thành công", f"Máy chủ mạng LAN đã được kích hoạt!\n\nĐường dẫn: {url}")
+            except Exception as exc:
+                logger.exception("Could not start LAN sharing server")
+                messagebox.showerror("Không thể bật chia sẻ mạng LAN", f"Lỗi: {exc}\n\nChi tiết đã được ghi vào log.")
 
     def refresh_state(self):
         """Refreshes UI state, labels, stats, and QR code."""
@@ -284,7 +291,12 @@ class LANScreenFrame(ctk.CTkFrame):
     def open_browser(self):
         """Opens the web client in default browser."""
         if not lan_server.is_running:
-            lan_server.start(port=int(self.entry_port.get().strip() or 8080))
-            self.refresh_state()
+            try:
+                lan_server.start(port=int(self.entry_port.get().strip() or 8080))
+                self.refresh_state()
+            except Exception as exc:
+                logger.exception("Could not start LAN sharing server from browser action")
+                messagebox.showerror("Không thể bật chia sẻ mạng LAN", f"Lỗi: {exc}\n\nChi tiết đã được ghi vào log.")
+                return
         url = self.lbl_url.cget("text")
         webbrowser.open(url)

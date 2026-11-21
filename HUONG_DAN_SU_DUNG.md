@@ -123,19 +123,15 @@ Giao diện Tab 1 gồm **3 cột làm việc trực quan** có thể kéo giãn
 
 ---
 
-## 5. TÍNH NĂNG ĐỔI TÊN FILE THEO FOLDER (FAST OCR SIÊU TỐC)
+## 5. RÀ SOÁT VÀ ĐỔI TÊN PDF THEO THƯ MỤC
 
-Dành cho nhu cầu **chỉ cần copy và đổi tên hàng loạt file PDF** trong thư mục mà không cần xuất file Excel con:
+Luồng này lưu bản PDF đã duyệt và cập nhật sổ tổng hợp của tỉnh. Excel chi tiết từng người được xuất trong luồng số hóa đầy đủ.
 
-1. Tại khung *Hàng đợi hồ sơ*, bấm nút: **`📑 Đổi tên file (theo folder)`** (màu vàng cam).
-2. Chọn thư mục hồ sơ (Ví dụ: `DuLieuSoHoa_GPLS/LaoCai/HOP_01/HoSo_01`).
-3. Hệ thống kích hoạt **Thuật toán Fast OCR Tối Ưu**:
-   * Chỉ đọc đúng 3 trang: **Trang 1 (Bìa)** + **Trang 2 (Dòng 1 lấy Số bằng đầu)** + **Trang cuối (Dòng cuối lấy Số bằng cuối)**.
-   * Bỏ qua hoàn toàn các trang từ 3 đến N-1.
-   * Tốc độ xử lý chỉ mất **~2-3 giây/file** (nhanh gấp 20 lần so với đọc toàn bộ trang).
-4. Tự động sao chép và sinh file mới mang tên chuẩn tại thư mục đó:
-   - Ví dụ: `15.SQL.03.1996.A461544-C244140.pdf`
-   - File gốc ban đầu được giữ nguyên 100%.
+1. Bấm **Đổi tên file (theo folder)** và chọn thư mục hồ sơ.
+2. Chọn PDF ở cột trái. Xem bản scan ở giữa, rồi rà soát thông tin bìa, vị trí hồ sơ và tên đề xuất ở cột phải.
+3. Kiểm tra lại mã tỉnh và ngày. Tên đề xuất tự cập nhật theo nhóm SQL, QĐTT hoặc QĐSH. Bạn có thể chỉnh tên trực tiếp trước khi lưu.
+4. Bấm **Xác nhận lưu PDF và sổ tổng hợp**. Ứng dụng tạo bản sao cạnh PDF gốc, cập nhật `So_Theo_Doi_Day_So_GPLX_XX.xlsx` ở thư mục tỉnh rồi chuyển sang file kế tiếp.
+5. Nếu Excel đang mở sổ tổng hợp, đóng sổ rồi bấm xác nhận lại. Khi trùng tên với hồ sơ khác, chọn tên đích khác.
 
 ---
 

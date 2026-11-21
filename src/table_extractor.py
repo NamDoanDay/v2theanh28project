@@ -1,187 +1,442 @@
-"""
-Table extractor and column mapper for GPLX registers.
-Maps OCR bounding boxes into structured tabular records:
-STT, Họ và tên, Năm sinh, Quốc tịch, Nơi cư trú, Số bằng, Ký nhận.
-"""
+"""Extract GPLX lists from OCR and the geometry of each PDF page."""
+from dataclasses import dataclass, replace
 import re
-from typing import List, Dict, Any, Tuple
-from src.naming_rules import normalize_license_code
+from statistics import median
+import unicodedata
+
+import cv2
+import numpy as np
+
+from src.naming_rules import LICENSE_NUMBER
+from src.sequence_analyzer import split_prefix_and_num
 from src.vietnamese_utils import restore_vietnamese_name, normalize_vietnamese_address, normalize_nationality
 
-def assign_column_by_x_ratio(x_ratio: float) -> str:
-    """
-    Maps horizontal coordinate (ratio 0.0 - 1.0) to corresponding column.
-    Based on standard Sổ gốc GPLX layout.
-    """
-    if x_ratio < 0.08:
-        return "stt"
-    elif x_ratio < 0.28:
-        return "full_name"
-    elif x_ratio < 0.38:
-        return "photo"
-    elif x_ratio < 0.48:
-        return "birth_year"
-    elif x_ratio < 0.58:
-        return "nationality"
-    elif x_ratio < 0.80:
-        return "address"
-    elif x_ratio < 0.92:
-        return "license_number"
-    else:
-        return "signature"
 
-def cluster_boxes_into_rows(ocr_results: List[Any], img_width: int, img_height: int) -> List[Dict[str, Any]]:
-    """
-    Clusters OCR bounding boxes into distinct citizen rows.
-    ocr_results is a list of [box, text, score] from RapidOCR.
-    """
-    if not ocr_results:
+def _key(text):
+    folded = unicodedata.normalize("NFD", text.lower().replace("đ", "d"))
+    return re.sub(r"[^a-z0-9]", "", folded)
+
+
+_HEADINGS = {
+    "stt": ("stt", "sott", "s6tt", "s0tt", "tt", "sothutu"),
+    "full_name": ("hovaten", "hoten", "hotenthisinh", "hotencongdan"),
+    "birth_year": ("namsinh", "ngaysinh", "ngaythangnamsinh", "tuoi"),
+    "address": ("noicutru", "diachi", "noidangkyhokhau", "noithuongtru", "hokhau", "noicutruthuongtru"),
+    "license_number": ("sobang", "sogplx", "s6gplx", "sogiayphep", "magplx", "gplx", "sogplxdaduoccap",
+                       "sobanglaixe", "magiayphep", "masobang", "sogiaypheplaixe"),
+    "nationality": ("quoctich", "qu0ctich"),
+    "photo": ("anh", "anh3x4", "anh4x6", "anhchandung"),
+    "signature": ("kynhan", "chuky"),
+    "issue_date": ("ngaycap", "ngaycapgplx"),
+    "license_class": ("hang", "hanggplx", "hangbang"),
+    "register_index": ("sottbangke", "s6ttbangke", "sttbangke", "sobangke", "sotthoso", "masohoso", "mahoso"),
+    "identity": ("cccd", "cmnd", "socccd", "socmnd", "dinhdanhcanhan", "sodinhdanhcanhan", "socancuoc"),
+    "expiry_date": ("ngayhethan", "ngayhethieuluc", "ngayhieuluc"),
+    "return_date": ("ngaytra",),
+}
+_ROLES = {alias: role for role, aliases in _HEADINGS.items() for alias in aliases}
+# OCR occasionally joins adjacent column headings into a single quadrilateral.
+_MERGED = (
+    ("namsinh", "quoctich", "Năm sinh", "Quốc tịch"),
+    ("sobang", "kynhan", "Số bằng", "Ký nhận"),
+    ("sogplx", "ngaycap", "Số GPLX", "Ngày cấp"),
+)
+_LICENSE_CONFIDENCE = 0.70
+
+
+@dataclass(frozen=True)
+class Box:
+    text: str
+    score: float
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+    @property
+    def x(self):
+        return (self.x0 + self.x1) / 2
+
+    @property
+    def y(self):
+        return (self.y0 + self.y1) / 2
+
+
+@dataclass
+class PageGrid:
+    # Positions and extents are normalized to the rendered page size.
+    ink: np.ndarray
+    vertical: list
+    horizontal: list
+
+    def is_blank(self, bounds):
+        x0, y0, x1, y1 = bounds
+        height, width = self.ink.shape
+        mx = max(2, int((x1 - x0) * width * 0.035))
+        my = max(2, int((y1 - y0) * height * 0.10))
+        crop = self.ink[max(0, int(y0 * height) + my):min(height, int(y1 * height) - my),
+                        max(0, int(x0 * width) + mx):min(width, int(x1 * width) - mx)]
+        if crop.shape[0] < 5 or crop.shape[1] < 8:
+            return False
+        _, _, stats, _ = cv2.connectedComponentsWithStats(crop, connectivity=8)
+        # Ignore scan specks and thin pieces of a printed horizontal rule.
+        min_area = max(4, round(min(height, width) / 250))
+        thin = max(2, round(height * .004))
+        marks = [(x, y, w, h) for x, y, w, h, a in stats[1:] if a >= min_area]
+        for x, y, w, h in marks:
+            if w <= thin and (x == 0 or x + w == crop.shape[1]):
+                continue
+            if h <= thin:
+                same_rule = [(a, b) for a, cy, b, ch in marks if ch <= thin and abs(cy - y) <= thin]
+                if w >= crop.shape[1] * .55 or (
+                    len(same_rule) >= 3 and max(a + b for a, b in same_rule) - min(a for a, _ in same_rule) >= crop.shape[1] * .45
+                ):
+                    continue
+            return False
+        return True
+
+
+def measure_page_grid(image):
+    gray = np.asarray(image.convert("L"))
+    height, width = gray.shape
+    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 12)
+
+    def lines(vertical):
+        gap = max(7, (height if vertical else width) // 65)
+        closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((gap, 1) if vertical else (1, gap), np.uint8))
+        kernel = (1, max(16, height // 22)) if vertical else (max(25, width // 17), 1)
+        mask = cv2.morphologyEx(closed, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, kernel))
+        contours = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        segments = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            if vertical and h > height * .10 and w < max(14, width * .02):
+                segments.append(((x + w / 2) / width, y / height, (y + h) / height))
+            if not vertical and w > width * .20 and h < max(14, height * .025):
+                segments.append(((y + h / 2) / height, x / width, (x + w) / width))
+        return sorted(segments)
+
+    return PageGrid(binary, lines(True), lines(False))
+
+
+def _boxes(result, size):
+    width, height = size
+    return [
+        Box(str(text).strip(), float(score), min(xs) / width, min(ys) / height, max(xs) / width, max(ys) / height)
+        for points, text, score in result if str(text).strip()
+        for xs, ys in [tuple(zip(*points))]
+    ]
+
+
+def _split_merged(box):
+    key = _key(box.text)
+    if key in _ROLES:
+        return [box]
+    for first, second, label1, label2 in _MERGED:
+        if key.strip("il") == first + second:
+            split = box.x0 + (box.x1 - box.x0) * len(first) / len(first + second)
+            return [replace(box, text=label1, x1=split), replace(box, text=label2, x0=split)]
+    return [box]
+
+
+def _license(text):
+    code = re.sub(r"\s+", "", text.upper()).strip(".,:;")
+    return code if LICENSE_NUMBER.fullmatch(code) else ""
+
+
+def _header_columns(boxes, anchor, grid, left, right):
+    height = anchor.y1 - anchor.y0
+    spanning = [y for y, x0, x1 in grid.horizontal if x0 <= anchor.x <= x1 and x1 - x0 >= min(.32, (right - left) * .65)]
+    below = [y for y in spanning if anchor.y1 - height * .10 <= y <= anchor.y1 + height * 1.75]
+    above = [y for y in spanning if anchor.y0 - height * 1.75 <= y <= anchor.y0 + height * .10]
+    top = max(above, default=anchor.y0 - height * 1.30)
+    bottom = min(below, default=anchor.y1 + height * .95)
+    candidates = [
+        part for box in boxes if left <= box.x < right and top <= box.y < bottom
+        and re.search(r"[A-Za-zÀ-ỹ]", box.text) and not _license(box.text) and not _key(box.text).startswith("trang")
+        for part in _split_merged(box)
+    ]
+    dividers = [x for x, start, end in grid.vertical if left <= x <= right and start < bottom + .035 and end > bottom + .065]
+    groups = []
+    for box in sorted(candidates, key=lambda item: item.x):
+        if groups:
+            previous = groups[-1]
+            closest = min(previous, key=lambda p: abs(p.x - box.x))
+            different_line = abs(closest.y - box.y) > height * .30
+            overlap = min(closest.x1, box.x1) - max(closest.x0, box.x0)
+            separated = any(min(closest.x, box.x) + .003 < x < max(closest.x, box.x) - .003 for x in dividers)
+            if different_line and overlap > 0 and not separated:
+                previous.append(box)
+                continue
+        groups.append([box])
+
+    labels, spans = [], []
+    for group in groups:
+        label = " ".join(b.text for b in sorted(group, key=lambda b: (b.y, b.x)))
+        labels.append(label)
+        spans.append((min(b.x0 for b in group), max(b.x1 for b in group)))
+    roles = [_ROLES.get(_key(label), "other") for label in labels]
+    positive = set(roles)
+    if "full_name" not in positive or not (
+        "license_number" in positive
+        or ("birth_year" in positive and bool(positive & {"address", "stt", "issue_date"}))
+        or {"stt", "address"} <= positive
+    ):
+        return None
+    # Use the printed rule between headers where visible. OCR box gaps fill in damaged rules.
+    edges = [max((x for x in dividers if x < spans[0][0] + .005), default=left)]
+    for (_, end), (start, _) in zip(spans, spans[1:]):
+        midpoint = (end + start) / 2
+        edges.append(min((x for x in dividers if end - .005 <= x <= start + .005),
+                         key=lambda x: abs(x - midpoint), default=midpoint))
+    edges.append(min((x for x in dividers if x > spans[-1][1] - .005), default=right))
+    if any(a >= b for a, b in zip(edges, edges[1:])):
+        return None
+    columns = [
+        {"label": label, "role": role, "left": x0, "right": x1}
+        for label, role, x0, x1 in zip(labels, roles, edges, edges[1:])
+    ]
+    return bottom, columns
+
+
+def _name(text):
+    return len(re.findall(r"[A-Za-zÀ-ỹ]+", text)) >= 2 and _key(text) not in _ROLES
+
+
+def _other_section(text):
+    return _key(text).startswith(("danhsachdusathach", "danhsachkhongtrungtuyen", "danhsachthisinhkhongtrungtuyen",
+                                  "thanhtien", "phisathach", "thongketonghop"))
+
+
+def _read_rows(boxes, columns, start, end, grid, page_number):
+    def in_column(box, column):
+        return column["left"] <= box.x < column["right"]
+
+    roles = [c["role"] for c in columns]
+    name_index = roles.index("full_name")
+    stt_index = roles.index("stt") if "stt" in roles else None
+    boxes = [b for b in boxes if start <= b.y < end and columns[0]["left"] <= b.x < columns[-1]["right"]]
+    totals = [b.y0 for b in boxes if _key(b.text) in {"tongcong", "cong", "congdon", "tongso"} or _other_section(b.text)]
+    if totals:
+        end = min(end, min(totals))
+        boxes = [b for b in boxes if b.y < end]
+    if not boxes:
+        return []
+    glyph = median(b.y1 - b.y0 for b in boxes)
+    names = sorted((b for b in boxes if in_column(b, columns[name_index]) and _name(b.text)), key=lambda b: b.y)
+    entries = []
+    for b in names:
+        aligned = [other for other in boxes if abs(other.y - b.y) <= glyph * .66
+                   and not in_column(other, columns[name_index])]
+        has_index = stt_index is not None and any(
+            in_column(other, columns[stt_index]) and re.fullmatch(r"[0-9]{1,4}[.)]?", other.text)
+            for other in aligned
+        )
+        has_data = any(
+            _license(other.text) or any(in_column(other, c) and len(other.text) > 2
+                                        for c in columns if c["role"] in {"birth_year", "address", "issue_date"})
+            for other in aligned
+        )
+        if (has_index or has_data or (len(columns) == 2 and "license_number" in roles)) and (
+            not entries or b.y - entries[-1][0].y > glyph * .67
+        ):
+            entries.append((b, b.score >= .62))
+    if stt_index is not None:
+        for box in boxes:
+            if not in_column(box, columns[stt_index]) or not re.fullmatch(r"[0-9]{1,4}[.)]?", box.text):
+                continue
+            if any(abs(entry.y - box.y) <= glyph for entry, _ in entries):
+                continue
+            if any(abs(other.y - box.y) <= glyph and (
+                _license(other.text) or any(in_column(other, c) and re.fullmatch(r"[0-9]{4}", other.text)
+                                            for c in columns if c["role"] == "birth_year")
+            ) for other in boxes):
+                entries.append((box, False))
+    if not entries:
         return []
 
-    # Filter out header texts (TRANG 1, STT, HỌ VÀ TÊN, etc.)
-    header_keywords = ["trang", "stt", "họ và tên", "ảnh 3 x 4", "năm sinh", "quốc tịch", "nơi cư trú", "số bằng", "ký nhận"]
-    
-    data_boxes = []
-    for item in ocr_results:
-        box, text, score = item[0], str(item[1]).strip(), float(item[2])
-        if not text:
+    entries.sort(key=lambda item: item[0].y)
+    centers = [b.y for b, _ in entries]
+    gaps = [b - a for a, b in zip(centers, centers[1:])]
+    typical = median(gaps) if gaps else glyph * 2
+    rules = [y for y, a, b in grid.horizontal if b - a >= (columns[-1]["right"] - columns[0]["left"]) * .42
+             and a < columns[name_index]["right"]]
+    def boundary(a, b):
+        midpoint = (a + b) / 2
+        return min((y for y in rules if a < y < b), key=lambda y: abs(y - midpoint), default=midpoint)
+
+    top_edge = max((y for y in rules if start <= y < centers[0] and centers[0] - y <= typical), default=start)
+    bottom_edge = min((y for y in rules if centers[-1] < y <= end and y - centers[-1] <= typical),
+                      default=min(end, centers[-1] + max(typical * .65, glyph)))
+    row_edges = [top_edge, *(boundary(a, b) for a, b in zip(centers, centers[1:])), bottom_edge]
+    rows = []
+    for i, (_, confident) in enumerate(entries):
+        y0, y1 = row_edges[i:i+2]
+        cells, scores, bounds = [], [], []
+        for column in columns:
+            found = [b for b in boxes if y0 <= b.y < y1 and in_column(b, column)]
+            found.sort(key=lambda b: (round(b.y / max(glyph * .5, .001)), b.x))
+            cells.append(" ".join(b.text for b in found))
+            scores.append(min((b.score for b in found if _key(b.text)), default=1.0))
+            bounds.append((column["left"], y0, column["right"], y1))
+        raw_stt = cells[stt_index] if stt_index is not None else ""
+        stt = re.fullmatch(r"([0-9]{1,4})[.)]?", raw_stt)
+        rows.append({"cells": cells, "scores": scores, "bounds": bounds, "page_number": page_number,
+                     "stt": int(stt[1]) if stt else None, "identity_confident": confident})
+    return rows
+
+
+def _finish_rows(rows, columns, grid):
+    roles = [c["role"] for c in columns]
+    valid_columns = [i for i, role in enumerate(roles) if role == "license_number"]
+    inferred = False
+    if not valid_columns:
+        for i, role in enumerate(roles):
+            if role != "other":
+                continue
+            values = [row["cells"][i] for row in rows if row["cells"][i]]
+            matches = sum(bool(_license(value)) for value in values)
+            if matches >= 2 and matches / len(values) >= .67:
+                valid_columns.append(i)
+        inferred = len(valid_columns) == 1
+    index = valid_columns[0] if len(valid_columns) == 1 else None
+    if inferred:
+        columns[index]["role"] = "license_number"
+        columns[index]["inferred"] = True
+    for row in rows:
+        row["license_number"] = ""
+        if index is None:
+            row["license_state"] = "unknown_column"
             continue
-            
-        text_lower = text.lower()
-        if any(hk in text_lower for hk in header_keywords) and len(text_lower) < 20:
-            continue
-            
-        # Calculate center point
-        xs = [pt[0] for pt in box]
-        ys = [pt[1] for pt in box]
-        center_x = sum(xs) / 4.0
-        center_y = sum(ys) / 4.0
-        box_height = max(ys) - min(ys)
-        
-        data_boxes.append({
-            "text": text,
-            "score": score,
-            "center_x": center_x,
-            "center_y": center_y,
-            "box_height": box_height,
-            "x_ratio": center_x / img_width,
-            "y_ratio": center_y / img_height
+        value = row["cells"][index]
+        code = _license(value)
+        if code and row["scores"][index] >= _LICENSE_CONFIDENCE:
+            row["license_number"] = code
+            row["license_state"] = "valid"
+        elif not value and not columns[index].get("inferred") and grid.is_blank(row["bounds"][index]):
+            row["license_state"] = "blank"
+        else:
+            row["license_state"] = "uncertain"
+    return rows
+
+
+def _compatible(previous, current):
+    return len(previous) == len(current) and all(
+        a["role"] == b["role"] and (_key(a["label"]) == _key(b["label"]) or a["role"] != "other")
+        and abs(a["right"] - b["right"]) <= .08 and abs(a["left"] - b["left"]) <= .08
+        for a, b in zip(previous, current)
+    )
+
+
+def _continues(table, rows, page_number, *, headerless=False):
+    last = table["rows"][-1]
+    distance = page_number - last["page_number"]
+    if distance < 1 or (headerless and distance != 1):
+        return False
+    order = [row["stt"] for row in rows if row["stt"] is not None]
+    if order and (order[0] == 1 or order != sorted(set(order))):
+        return False
+    if order and last["stt"] is not None and rows[0]["stt"] is not None:
+        return order[0] > last["stt"] if distance == 1 else order[0] == last["stt"] + 1
+    prefix, number, _ = split_prefix_and_num(last["license_number"])
+    next_prefix, next_number, _ = split_prefix_and_num(rows[0]["license_number"])
+    if prefix == next_prefix and number >= 0 and 0 < next_number - number <= (20 if distance == 1 else 1):
+        return True
+    # Without STT or a known endpoint, only an unlabeled, aligned run can continue.
+    if headerless and len(rows) >= 2:
+        roles = [c["role"] for c in table["columns"]]
+        if not {"birth_year", "address"} <= set(roles):
+            return False
+        birth, address = roles.index("birth_year"), roles.index("address")
+        return all(row["identity_confident"] and re.fullmatch(r"[0-9]{4}|[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}", row["cells"][birth])
+                   and _name(row["cells"][address]) for row in rows)
+    return False
+
+
+def _align_columns(columns, grid):
+    """Transfer the previous layout when the printed dividers moved together on the scan."""
+    edges = [columns[0]["left"], *(c["right"] for c in columns)]
+    shifts = []
+    for edge in edges:
+        nearest = min((x for x, start, end in grid.vertical if end - start >= .20 and abs(x - edge) <= .03),
+                      key=lambda x: abs(x - edge), default=None)
+        if nearest is not None:
+            shifts.append(nearest - edge)
+    offset = median(shifts) if len(shifts) >= 3 and max(shifts) - min(shifts) < .02 else 0
+    return [{**c, "left": max(0, c["left"] + offset), "right": min(1, c["right"] + offset)} for c in columns]
+
+
+class LicenseTableExtractor:
+    """Accumulate independent lists while keeping source columns, cells, and page numbers."""
+
+    def __init__(self):
+        self.tables = []
+        self.previous_columns = None
+
+    def read_page(self, ocr_result, size, grid, page_number):
+        boxes = _boxes(ocr_result, size)
+        anchors = sorted((box for box in boxes if _ROLES.get(_key(box.text)) == "full_name"), key=lambda b: (b.y, b.x))
+        bands = []
+        for anchor in anchors:
+            if not bands or anchor.y - bands[-1][0].y > max(.012, (anchor.y1 - anchor.y0) * .6):
+                bands.append([])
+            bands[-1].append(anchor)
+        headers = []
+        for band in bands:
+            band.sort(key=lambda b: b.x)
+            left = 0.0
+            for i, anchor in enumerate(band):
+                right = 1.0
+                if i + 1 < len(band):
+                    next_anchor = band[i + 1]
+                    split = [b.x0 for b in boxes if anchor.x < b.x < next_anchor.x
+                             and abs(b.y - anchor.y) < .04 and _ROLES.get(_key(b.text)) == "stt"]
+                    right = min(split, default=(anchor.x + next_anchor.x) / 2)
+                parsed = _header_columns(boxes, anchor, grid, left, right)
+                if parsed and not any(_other_section(b.text) and 0 < anchor.y - b.y < .10 for b in boxes):
+                    headers.append((anchor.y, *parsed))
+                left = right
+        if headers:
+            for i, (y, start, columns) in enumerate(headers):
+                end = next((h[0] for h in headers[i + 1:] if h[0] - y > .015), 1.0)
+                rows = _read_rows(boxes, columns, start, end, grid, page_number)
+                if not rows:
+                    continue
+                _finish_rows(rows, columns, grid)
+                if (self.tables and _continues(self.tables[-1], rows, page_number)
+                        and _compatible(self.previous_columns, columns)):
+                    self.tables[-1]["rows"].extend(rows)
+                else:
+                    self.tables.append({"columns": columns, "rows": rows})
+                self.previous_columns = columns
+        elif self.tables:
+            # An unlabeled page needs matching row geometry and ordinal continuity.
+            columns = _align_columns(self.previous_columns, grid)
+            rows = _read_rows(boxes, columns, 0.0, 1.0, grid, page_number)
+            if rows:
+                _finish_rows(rows, columns, grid)
+                previous = self.tables[-1]
+                if _continues(previous, rows, page_number, headerless=True):
+                    previous["rows"].extend(rows)
+                elif page_number == previous["rows"][-1]["page_number"] + 1:
+                    # Retain a review marker when the next page resembles the list but cannot be joined safely.
+                    previous.setdefault("unresolved_pages", []).append(page_number)
+
+
+def table_citizens(table):
+    """Project source rows onto the fields used by the current review and search."""
+    roles = [c["role"] for c in table["columns"]]
+    citizens = []
+    for position, row in enumerate(table["rows"], start=1):
+        values = dict(zip(roles, row["cells"]))
+        citizens.append({
+            "stt": row["stt"] if row["stt"] is not None else position,
+            "page_number": row["page_number"],
+            "full_name": restore_vietnamese_name(values.get("full_name", "")),
+            "birth_year": values.get("birth_year", ""),
+            "address": normalize_vietnamese_address(values.get("address", "")),
+            "nationality": normalize_nationality(values["nationality"]) if values.get("nationality") else "",
+            "license_number": row["license_number"],
+            "license_state": row["license_state"],
         })
-
-    # Sort vertically from top to bottom
-    data_boxes.sort(key=lambda b: b["center_y"])
-    
-    # Cluster into rows using vertical distance threshold (e.g. ~4% of image height)
-    row_clusters: List[List[Dict[str, Any]]] = []
-    y_threshold = img_height * 0.05
-    
-    for b in data_boxes:
-        placed = False
-        for cluster in row_clusters:
-            # Check average Y of the cluster
-            avg_y = sum(item["center_y"] for item in cluster) / len(cluster)
-            if abs(b["center_y"] - avg_y) < y_threshold:
-                cluster.append(b)
-                placed = True
-                break
-        if not placed:
-            row_clusters.append([b])
-
-    # Convert clusters into citizen records
-    citizens: List[Dict[str, Any]] = []
-    
-    for row_idx, cluster in enumerate(row_clusters, start=1):
-        # Sort left to right
-        cluster.sort(key=lambda b: b["center_x"])
-        
-        row_dict = {
-            "stt": None,
-            "stt_from_ocr": False,
-            "full_name": "",
-            "birth_year": "",
-            "nationality": "Việt Nam",
-            "address": "",
-            "license_number": "",
-            "confidence": 1.0,
-            "raw_items": []
-        }
-        
-        scores = []
-        for b in cluster:
-            col = assign_column_by_x_ratio(b["x_ratio"])
-            scores.append(b["score"])
-            row_dict["raw_items"].append((col, b["text"], b["score"]))
-            
-            if col == "stt":
-                digits = re.findall(r"\d+", b["text"])
-                if digits:
-                    row_dict["stt"] = int(digits[0])
-                    row_dict["stt_from_ocr"] = True
-                else:
-                    t = b["text"].strip()
-                    if t in ["I", "l", "|", "!", "i", "/"]:
-                        row_dict["stt"] = 1
-                        row_dict["stt_from_ocr"] = True
-            elif col == "full_name":
-                if not row_dict["full_name"]:
-                    row_dict["full_name"] = b["text"]
-                else:
-                    row_dict["full_name"] += " " + b["text"]
-            elif col == "birth_year":
-                num = re.sub(r"[^0-9]", "", b["text"])
-                if len(num) == 4:
-                    row_dict["birth_year"] = num
-            elif col == "nationality":
-                if b["text"] not in ['"', "''"]:
-                    row_dict["nationality"] = b["text"]
-            elif col == "address":
-                if not row_dict["address"]:
-                    row_dict["address"] = b["text"]
-                else:
-                    row_dict["address"] += " " + b["text"]
-            elif col == "license_number":
-                row_dict["license_number"] = normalize_license_code(b["text"])
-        
-        # Heuristic rescue: if license_number is still empty, look through all texts in row for pattern
-        if not row_dict["license_number"]:
-            for b in cluster:
-                # E.g. A161541, C244138
-                match = re.search(r"([A-Za-z]{1,2}\s*[0-9]{5,7})", b["text"])
-                if match:
-                    row_dict["license_number"] = normalize_license_code(match.group(1))
-                    break
-
-        # Check if this row is actually a table header row
-        full_name_upper = row_dict["full_name"].upper().replace(" ", "")
-        header_triggers = ["HOVATEN", "HỌVÀTÊN", "NOICUTRU", "NƠICƯTRÚ", "SOBANG", "SỐBẰNG", "NAMSINH", "NĂMSINH", "KYNHAN"]
-        is_header_row = any(ht in full_name_upper for ht in header_triggers)
-        if "SOBANG" in row_dict["license_number"].upper() or "KYNHAN" in row_dict["license_number"].upper():
-            is_header_row = True
-
-        if is_header_row:
-            continue
-
-        # Check if STT was merged into the beginning of full_name (e.g. "1. Trần Văn Yên" or "02 - Nguyễn Văn Thủy")
-        if not row_dict.get("stt_from_ocr") and row_dict["full_name"]:
-            m = re.match(r"^(\d{1,4})[\.\s\-\/\:\)]+\s*(.*)$", row_dict["full_name"])
-            if m:
-                row_dict["stt"] = int(m.group(1))
-                row_dict["stt_from_ocr"] = True
-                row_dict["full_name"] = m.group(2).strip()
-
-        # Clean stray OCR artifacts from front of full_name (e.g. '|', '!', 'I ')
-        row_dict["full_name"] = re.sub(r"^[I\|l\!\:\.\-\–]\s*", "", row_dict["full_name"]).strip()
-
-        if scores:
-            row_dict["confidence"] = round(sum(scores) / len(scores), 2)
-            
-        # Only add if has a valid name or license number (and not a header)
-        if row_dict["full_name"] or (row_dict["license_number"] and row_dict["license_number"] != "UNKNOWN"):
-            # Restore full Vietnamese accents for name, address, and nationality
-            row_dict["full_name"] = restore_vietnamese_name(row_dict["full_name"])
-            row_dict["address"] = normalize_vietnamese_address(row_dict["address"])
-            row_dict["nationality"] = normalize_nationality(row_dict["nationality"])
-            citizens.append(row_dict)
-            
-    # Retain exact STT from OCR; do not reset sequentially per page
     return citizens

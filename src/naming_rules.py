@@ -1,17 +1,39 @@
-"""
-Naming rules and filename validation module.
-Specification:
-- Pre-2012 Sổ quản lý (SQL): [Mã tỉnh].[SQL].[Tháng].[Năm].[Số bằng đầu]-[Số bằng cuối]
-  Ví dụ: 15.SQL.03.1996.A161541-C244140
-"""
+"""Rules for proposing and validating GPLX dossier filenames."""
 import re
-import os
+from dataclasses import dataclass
+from datetime import date
+
+from src.config import PROVINCE_CODES
 
 FORBIDDEN_CHARS = re.compile(r'[\\/:*?"<>|]')
+LICENSE_NUMBER = re.compile(r"[A-Z]{1,2}[0-9]{6}")
+DOSSIER_GROUPS = ("SQL", "QĐTT", "QĐSH")
+STANDARD_DOSSIER_PDF = re.compile(
+    r"[0-9]{2}\.(?:SQL\.[0-9]{2}\.[0-9]{4}\..+|[0-9]+\.[0-9]{2}\.[0-9]{2}\.[0-9]{4})\.pdf",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class FilenameProposal:
+    group: str | None
+    filename: str | None  # Stem only. Callers append the file extension.
+    errors: dict[str, str]
 
 def clean_filename(filename: str) -> str:
     """Removes or replaces characters forbidden in Windows filenames."""
     return FORBIDDEN_CHARS.sub("-", filename).strip()
+
+
+def is_valid_windows_filename_stem(filename: str) -> bool:
+    return (
+        bool(filename)
+        and filename == clean_filename(filename)
+        and not filename.endswith(".")
+        and not filename.lower().endswith(".pdf")
+        and not any(ord(char) < 32 for char in filename)
+        and not re.fullmatch(r"CON|PRN|AUX|NUL|(?:COM|LPT)[1-9¹²³]", filename.split(".", 1)[0].rstrip(), re.IGNORECASE)
+    )
 
 def normalize_license_code(raw_code: str) -> str:
     """
@@ -54,40 +76,80 @@ def normalize_license_code(raw_code: str) -> str:
 
     return clean_filename(cleaned)
 
-def build_dossier_filename(
-    province_code: str,
-    doc_type: str,
-    month: str,
-    year: str,
-    first_license: str,
-    last_license: str
-) -> str:
-    """
-    Builds the standardized filename according to archival rules.
-    Format: [Mã tỉnh].[SQL].[Tháng].[Năm].[Số đầu]-[Số cuối]
-    Note: Uses '.' and '-' instead of '/' to ensure Windows file system compatibility.
-    """
-    p_code = str(province_code).strip().zfill(2)
-    d_type = str(doc_type).strip().upper()
-    
-    # Clean month (e.g. '3' -> '03')
-    m_clean = re.sub(r"[^0-9]", "", str(month))
-    if m_clean:
-        m_str = m_clean.zfill(2)
+def _read_date(value: str, field: str, label: str, errors: dict[str, str]) -> date | None:
+    if not value.strip():
+        errors[field] = f"Thiếu {label}."
+        return None
+    match = re.fullmatch(r"([0-9]{1,2})\s*([/.-])\s*([0-9]{1,2})\s*\2\s*([0-9]{4})", value.strip())
+    if match:
+        day, _, month, year = match.groups()
+        try:
+            return date(int(year), int(month), int(day))
+        except ValueError:
+            pass
+    errors[field] = f"{label.capitalize()} không hợp lệ. Nhập ngày/tháng/năm."
+    return None
+
+
+def propose_dossier_filename(
+    *,
+    province_code: str = "",
+    suggested_province_code: str = "",
+    province_confirmed: bool = False,
+    exam_date: str = "",
+    decision_date: str = "",
+    decision_number: str = "",
+    first_license_no: str = "",
+    last_license_no: str = "",
+    license_column_empty: bool = False,
+    confirmed_group: str = "",
+) -> FilenameProposal:
+    """Return the filename stem or errors keyed by the fields that need review."""
+    errors = {}
+    code = province_code.strip()
+    if not code:
+        errors["province_code"] = "Chưa chọn mã tỉnh lưu trữ."
+    elif not re.fullmatch(r"[0-9]{2}", code) or not any(p["code"] == code for p in PROVINCE_CODES):
+        errors["province_code"] = "Mã tỉnh không có trong danh mục cấu hình."
+    elif suggested_province_code and suggested_province_code != code and not province_confirmed:
+        errors["province_code"] = f"OCR gợi ý mã {suggested_province_code}. Hãy xác nhận mã lưu trữ {code}."
+
+    exam = None
+    if exam_date.strip():
+        exam = _read_date(exam_date, "exam_date", "ngày thi/sát hạch", errors)
+        if exam is None:
+            return FilenameProposal(None, None, errors)
+        if exam < date(2013, 1, 1):
+            group = "SQL"
+        elif exam < date(2025, 3, 1):
+            group = "QĐTT"
+        else:
+            group = "QĐSH"
+    elif confirmed_group in DOSSIER_GROUPS:
+        group = confirmed_group
+        if group != "QĐTT":
+            errors["exam_date"] = "Nhóm này cần ngày thi/sát hạch để đặt tên."
     else:
-        m_str = "01"
-        
-    # Clean year (4 digits)
-    y_clean = re.sub(r"[^0-9]", "", str(year))
-    if len(y_clean) == 4:
-        y_str = y_clean
-    elif len(y_clean) == 2:
-        y_str = f"19{y_clean}" if int(y_clean) > 50 else f"20{y_clean}"
+        errors["exam_date"] = "Nhập ngày thi/sát hạch hoặc xác nhận nhóm hồ sơ."
+        return FilenameProposal(None, None, errors)
+
+    if group == "SQL":
+        endpoints = [re.sub(r"\s+", "", value).upper() for value in (first_license_no, last_license_no)]
+        if license_column_empty and not any(endpoints):
+            endpoints = ["A000000", "A000000"]
+        for field, label, value in zip(("first_license_no", "last_license_no"), ("đầu", "cuối"), endpoints):
+            if not LICENSE_NUMBER.fullmatch(value):
+                errors[field] = f"Số GPLX {label} phải gồm 1–2 chữ cái và 6 chữ số."
+        if errors:
+            return FilenameProposal(group, None, errors)
+        filename = f"{code}.SQL.{exam.month:02d}.{exam.year:04d}.{endpoints[0]}-{endpoints[1]}"
     else:
-        y_str = "1996"
-        
-    first_clean = normalize_license_code(first_license)
-    last_clean = normalize_license_code(last_license)
-    
-    base_name = f"{p_code}.{d_type}.{m_str}.{y_str}.{first_clean}-{last_clean}"
-    return clean_filename(base_name)
+        decision = re.fullmatch(r"([0-9]+)(?:\s*/\s*[^\s/][^\r\n]*)?", decision_number.strip())
+        if not decision:
+            errors["decision_number"] = "Nhập số quyết định, ví dụ 368/QĐ-SGTVT hoặc 368."
+        name_date = _read_date(decision_date, "decision_date", "ngày ký quyết định", errors) if group == "QĐTT" else exam
+        if errors:
+            return FilenameProposal(group, None, errors)
+        filename = f"{code}.{decision[1]}.{name_date.day:02d}.{name_date.month:02d}.{name_date.year:04d}"
+
+    return FilenameProposal(group, filename, errors)

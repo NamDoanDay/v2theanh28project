@@ -8,6 +8,7 @@ import os
 import queue
 import threading
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor
 import customtkinter as ctk
 from tkinter import messagebox
 from typing import Dict, Any, Optional
@@ -17,8 +18,7 @@ from src.gui.pdf_viewer import PDFViewerFrame
 from src.gui.review_panel import ReviewPanel
 from src.gui.search_screen import SearchScreenFrame
 from src.gui.lan_screen import LANScreenFrame
-from src.pipeline import process_dossier_pdf, commit_dossier
-from src.config import DEFAULT_OUTPUT_DIR
+from src.pipeline import process_dossier_pdf, commit_dossier, commit_folder_dossier
 from src.logger import get_logger, set_exception_notifier
 
 logger = get_logger(__name__)
@@ -36,11 +36,13 @@ class GPLXApp(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.active_file_path: Optional[str] = None
+        self.active_item = None
         self.is_processing_batch: bool = False
         self._closing = False
         self._ui_tasks = queue.Queue()
         self._worker_lock = threading.Lock()
         self._active_workers = 0
+        self._ocr = ThreadPoolExecutor(max_workers=1, thread_name_prefix="GPLX-OCR")
         set_exception_notifier(
             lambda title, message: self._dispatch_to_ui(self._show_error_popup, title, message)
         )
@@ -123,60 +125,84 @@ class GPLXApp(ctk.CTk):
 
     def on_search_view_pdf(self, pdf_path: str, page_num: int):
         """Switches to Ingestion tab and loads the PDF at the specific page."""
+        if self.active_file_path != pdf_path:
+            self.active_file_path = None
+            self.active_item = None
+            self.review.clear_data()
         self.tabview.set("📥 SỐ HÓA & ĐỔI TÊN HỒ SƠ")
         self.viewer.load_pdf(pdf_path, initial_page=page_num)
 
-    def on_file_selected(self, file_path: str):
+    def _is_active(self, item):
+        return self.active_item is item and self.sidebar.get_item(item["path"]) is item
+
+    def on_file_selected(self, file_path: Optional[str]):
+        if file_path is None:
+            self.active_file_path = None
+            self.active_item = None
+            self.review.clear_data()
+            self.viewer.clear_preview()
+            return
         item = self.sidebar.get_item(file_path)
         if not item:
             return
 
+        if self.active_item is not item:
+            self.review.clear_data()
+        self.active_item = item
         self.active_file_path = file_path
         self.viewer.load_pdf(file_path, initial_page=1)
 
-        if item["status"] == "READY" and item["data"]:
+        if item.get("rename_only") and item["status"] == "COMPLETED":
+            name = os.path.basename(item.get("saved_pdf") or file_path)
+            self.review.clear_data(f"Đã lưu PDF {name}")
+        elif item["status"] in {"READY", "COMPLETED", "SAVING"} and item["data"]:
             self.review.load_data(item["data"])
-        elif item["status"] == "COMPLETED" and item["data"]:
-            self.review.load_data(item["data"])
-        elif item["status"] == "PENDING":
-            # Run OCR in background
+            if item["status"] == "SAVING":
+                self.review.set_saving(True)
+        elif item["status"] == "PROCESSING":
+            self.review.clear_data("Đang đọc thông tin PDF…")
+        elif item["status"] in {"PENDING", "ERROR"}:
             self._process_single_file_async(file_path)
 
     def _process_single_file_async(self, file_path: str):
-        self.sidebar.update_item_status(file_path, "PROCESSING")
-        self.sidebar.start_loading()
+        item = self.sidebar.get_item(file_path)
+        if not item:
+            return
+        self.sidebar.update_entry(item, "PROCESSING")
+        self.review.clear_data("Đang đọc thông tin PDF…")
         prov_code = self.sidebar.get_selected_province_code()
+        rename_only = item.get("rename_only", False)
 
         def worker():
             try:
-                res = process_dossier_pdf(file_path, default_province=prov_code)
-                self._dispatch_to_ui(self._on_single_file_processed, file_path, res)
+                res = process_dossier_pdf(file_path, default_province=prov_code, rename_only=rename_only)
+                logger.info("PDF review data ready: %s", file_path)
+                self._dispatch_to_ui(self._on_single_file_processed, item, res)
             except Exception as exc:
                 logger.exception("OCR failed for %s", file_path)
-                self._dispatch_to_ui(self._on_single_file_error, file_path, str(exc))
-            finally:
-                self._dispatch_to_ui(self.sidebar.stop_loading)
-                self._worker_finished()
+                self._dispatch_to_ui(self._on_single_file_error, item, str(exc))
 
-        t = threading.Thread(target=worker, daemon=True)
-        self._worker_started()
+        logger.info("Queued PDF review: %s, rename_only=%s", file_path, rename_only)
         try:
-            t.start()
+            self._launch_worker(worker, ocr=True)
         except Exception:
-            self._worker_finished()
+            self.sidebar.update_entry(item, "ERROR")
             raise
 
-    def _on_single_file_processed(self, file_path: str, data: Dict[str, Any]):
-        self.sidebar.update_item_status(file_path, "READY", data=data)
-        if self.active_file_path == file_path:
+    def _on_single_file_processed(self, item, data: Dict[str, Any]):
+        self.sidebar.update_entry(item, "READY", data)
+        if self._is_active(item):
             self.review.load_data(data)
 
-    def _on_single_file_error(self, file_path: str, err_msg: str):
-        self.sidebar.update_item_status(file_path, "ERROR")
-        if self.active_file_path == file_path:
-            messagebox.showerror("Lỗi OCR", f"Không thể xử lý file:\n{os.path.basename(file_path)}\n\nChi tiết: {err_msg}")
+    def _on_single_file_error(self, item, err_msg: str):
+        self.sidebar.update_entry(item, "ERROR")
+        if self._is_active(item):
+            self.review.clear_data("Lỗi đọc PDF. Chọn lại file để thử lại.")
+            messagebox.showerror("Lỗi OCR", f"Không thể xử lý file:\n{item['filename']}\n\nChi tiết: {err_msg}")
 
     def on_batch_run_requested(self, prov_code: str):
+        if self.sidebar.rename_mode:
+            return
         if self.is_processing_batch:
             messagebox.showinfo("Thông báo", "Đang trong tiến trình chạy hàng loạt!")
             return
@@ -188,41 +214,47 @@ class GPLXApp(ctk.CTk):
 
         self.is_processing_batch = True
         self.sidebar.start_loading()
+        for item in pending_items:
+            item["status"] = "PROCESSING"
+        self.sidebar._render_queue()
 
         def batch_worker():
             try:
                 for item in pending_items:
                     path = item["path"]
-                    self._dispatch_to_ui(self.sidebar.update_item_status, path, "PROCESSING")
                     try:
                         res = process_dossier_pdf(path, default_province=prov_code)
-                        self._dispatch_to_ui(self.sidebar.update_item_status, path, "READY", data=res)
-                    except Exception:
+                        self._dispatch_to_ui(self._on_single_file_processed, item, res)
+                    except Exception as exc:
                         logger.exception("Batch OCR failed for %s", path)
-                        self._dispatch_to_ui(self.sidebar.update_item_status, path, "ERROR")
-                        self._dispatch_to_ui(
-                            messagebox.showerror,
-                            "Lỗi OCR",
-                            f"Không thể xử lý file:\n{os.path.basename(path)}\n\nChi tiết đã được ghi vào log.",
-                        )
+                        self._dispatch_to_ui(self._on_single_file_error, item, str(exc))
             finally:
-                self.is_processing_batch = False
-                self._dispatch_to_ui(self.sidebar.stop_loading)
-                self._dispatch_to_ui(messagebox.showinfo, "Hoàn tất", "Đã xử lý OCR xong toàn bộ hàng đợi! Bắt đầu duyệt từng file.")
-                self._worker_finished()
+                self._dispatch_to_ui(self._finish_batch)
 
-        t = threading.Thread(target=batch_worker, daemon=True)
-        self._worker_started()
         try:
-            t.start()
+            self._launch_worker(batch_worker, ocr=True)
         except Exception:
-            self._worker_finished()
+            for item in pending_items:
+                item["status"] = "PENDING"
+            self._finish_batch(show_dialog=False)
             raise
+
+    def _finish_batch(self, show_dialog=True):
+        self.is_processing_batch = False
+        self.sidebar.stop_loading()
+        self.sidebar._render_queue()
+        if show_dialog and not self.sidebar.rename_mode:
+            messagebox.showinfo("Hoàn tất", "Đã xử lý OCR xong hàng đợi. Bạn có thể duyệt từng PDF.")
 
     def on_page_jump(self, page_num: int):
         self.viewer.go_to_page(page_num)
 
     def on_confirm_commit(self, original_path: str, final_filename: str, cover_meta: Dict[str, Any], citizens: list):
+        if item := self.sidebar.get_item(original_path):
+            if item.get("rename_only"):
+                if self._is_active(item) and item["status"] == "READY":
+                    self._save_folder_pdf(item, final_filename, cover_meta)
+                return
         try:
             # Save directly into the same folder where the file was uploaded
             target_folder = os.path.dirname(os.path.abspath(original_path))
@@ -262,7 +294,52 @@ class GPLXApp(ctk.CTk):
             logger.exception("Could not save dossier %s", original_path)
             messagebox.showerror("Lỗi Lưu Hồ Sơ", f"Không thể lưu kết quả:\n{exc}")
 
-    def _select_next_item(self):
+    def _save_folder_pdf(self, item, final_filename, cover_meta):
+        data = item["data"]
+        data["cover_meta"] = cover_meta
+        data["review_filename"] = final_filename
+        stamp = data["source_stamp"]
+        self.sidebar.update_entry(item, "SAVING")
+        self.review.set_saving(True)
+
+        def save():
+            try:
+                result = commit_folder_dossier(item["path"], final_filename, cover_meta, source_stamp=stamp)
+            except Exception as exc:
+                logger.exception("Folder review save failed for %s", item["path"])
+                self._dispatch_to_ui(self._finish_folder_save, item, None, str(exc))
+            else:
+                self._dispatch_to_ui(self._finish_folder_save, item, result)
+
+        try:
+            self._launch_worker(save)
+        except Exception as exc:
+            logger.exception("Could not start folder save for %s", item["path"])
+            self._finish_folder_save(item, None, str(exc))
+
+    def _finish_folder_save(self, item, result, error=None):
+        if error:
+            self.sidebar.update_entry(item, "READY")
+            if self._is_active(item):
+                self.review.set_saving(False)
+            if self.sidebar.get_item(item["path"]) is item:
+                messagebox.showerror("Không thể lưu PDF và sổ tổng hợp", f"{item['filename']}\n\n{error}")
+            return
+        item["saved_pdf"] = result["pdf_path"]
+        self.sidebar.update_entry(item, "COMPLETED")
+        if self._is_active(item):
+            self.review.clear_data(f"Đã lưu PDF {os.path.basename(result['pdf_path'])}")
+            self._select_next_item(after=item)
+
+    def _select_next_item(self, after=None):
+        if after is not None:
+            items = self.sidebar.queue_items
+            index = next(i for i, item in enumerate(items) if item is after)
+            for item in items[index + 1:] + items[:index]:
+                if item["status"] in {"READY", "PENDING", "PROCESSING"}:
+                    self.on_file_selected(item["path"])
+                    return
+            return
         for item in self.sidebar.queue_items:
             if item["status"] in ["READY", "PENDING"]:
                 self.on_file_selected(item["path"])
@@ -279,6 +356,7 @@ class GPLXApp(ctk.CTk):
             )
             return
         self._closing = True
+        self._ocr.shutdown(wait=False)
         try:
             from src.server.lan_server import lan_server
             if lan_server.is_running:
@@ -302,6 +380,23 @@ class GPLXApp(ctk.CTk):
     def _worker_finished(self):
         with self._worker_lock:
             self._active_workers -= 1
+
+    def _launch_worker(self, work, *, ocr=False):
+        def run():
+            try:
+                work()
+            finally:
+                self._worker_finished()
+
+        self._worker_started()
+        try:
+            if ocr:
+                self._ocr.submit(run)
+            else:
+                threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            self._worker_finished()
+            raise
 
     def _drain_ui_tasks(self):
         while not self._ui_tasks.empty():
