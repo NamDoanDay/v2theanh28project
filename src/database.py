@@ -4,6 +4,7 @@ Uses SQLite 3 with FTS5 Full-Text Search.
 No external database server or connection string required.
 """
 import os
+import json
 import sqlite3
 import shutil
 import unicodedata
@@ -13,6 +14,112 @@ from typing import List, Dict, Any, Optional
 import openpyxl
 
 from src.config import DATABASE_PATH, BUNDLED_DATABASE_SEED_PATH
+from src.excel_generator import METADATA_FIELDS, PAGE_ROLE, REVIEW_ROLE, ROLE_ROW, WORKBOOK_METADATA, WORKBOOK_VERSION
+from src.logger import get_logger
+from src.naming_rules import LICENSE_NUMBER
+from src.pdf_processor import get_pdf_page_count
+from src.table_extractor import project_citizen, source_column_role
+
+logger = get_logger(__name__)
+
+
+def _excel_text(value):
+    return "" if value is None else str(value).strip()
+
+
+def _excel_positive_int(value, default=None):
+    text = _excel_text(value)
+    if re.fullmatch(r"[0-9]{1,9}", text) and int(text) > 0:
+        return int(text)
+    return default
+
+
+def _lookup_license(value):
+    text = _excel_text(value).upper()
+    compact = re.sub(r"\s+", "", text).strip(".,:;")
+    return compact if LICENSE_NUMBER.fullmatch(compact) else text
+
+
+def _excel_rows(rows, roles, total_pages, *, legacy=False):
+    positions = {role: roles.index(role) for role in (
+        "stt", "full_name", "birth_year", "nationality", "address", "license_number", PAGE_ROLE, REVIEW_ROLE,
+    ) if roles.count(role) == 1}
+    for position, row in enumerate(rows, 1):
+        values = {role: _excel_text(row[index]) for role, index in positions.items() if index < len(row)}
+        extra = json.loads(values.pop(REVIEW_ROLE, "") or "{}")
+        if not isinstance(extra, dict):
+            raise ValueError("Dữ liệu đối chiếu trong Excel không hợp lệ.")
+        license_number = values.get("license_number", "")
+        if "_blocked_license" in extra and license_number == _excel_text(extra["_blocked_license"]):
+            license_number = ""
+        if "license_number" in extra:
+            license_number = _excel_text(extra["license_number"])
+        for key in ("full_name", "birth_year", "nationality", "address", "stt"):
+            if key in extra:
+                values[key] = _excel_text(extra[key])
+        if not any((values.get("full_name"), license_number, values.get("stt"))):
+            continue
+        raw_page = values.get(PAGE_ROLE, "")
+        page = _excel_positive_int(raw_page, default=1 if legacy and not raw_page else None)
+        if page is None or page > total_pages:
+            raise ValueError(f"Số trang PDF không hợp lệ tại dòng dữ liệu {position}: {raw_page[:50] or '(trống)'}.")
+        normalized_license = _lookup_license(license_number)
+        stt = _excel_positive_int(values.get("stt"), position)
+        if legacy:
+            yield {
+                "stt": stt, "page_number": page, "license_number": normalized_license,
+                **{key: values.get(key, "") for key in ("full_name", "birth_year", "address", "nationality")},
+            }
+        else:
+            yield project_citizen(values, stt=stt, page_number=page, license_number=normalized_license)
+
+
+def _read_source_workbook(workbook, total_pages):
+    meta = workbook[WORKBOOK_METADATA]
+    if meta["A1"].value != WORKBOOK_VERSION:
+        raise ValueError("Phiên bản Excel GPLX chưa được hỗ trợ.")
+    cover = {key: _excel_text(value) for key, value in meta.iter_rows(min_row=2, max_col=2, values_only=True)
+             if key in METADATA_FIELDS}
+    citizens = []
+    found_table = False
+    for sheet in workbook.worksheets:
+        if sheet.sheet_state != "visible":
+            continue
+        rows = iter(sheet.iter_rows(min_row=ROLE_ROW, values_only=True))
+        roles = next(rows, ())
+        if PAGE_ROLE not in roles or REVIEW_ROLE not in roles:
+            continue
+        found_table = True
+        next(rows, None)
+        citizens.extend(_excel_rows(rows, roles, total_pages))
+    if not found_table:
+        raise ValueError("Không tìm thấy sheet danh sách GPLX có thông tin trang PDF.")
+    return cover, citizens
+
+
+def _read_legacy_workbook(workbook, total_pages):
+    sheet = workbook.active
+    title = _excel_text(sheet["A2"].value)
+    dates = _excel_text(sheet["A3"].value)
+
+    def metadata(pattern, text, default=""):
+        match = re.search(pattern, text)
+        return match[1] if match else default
+
+    cover = {
+        "province_code": metadata(r"Mã tỉnh:\s*([0-9]+)", title, "15"),
+        "book_type": _excel_text(sheet["A1"].value) or "Sổ gốc cấp bằng lái xe cơ giới đường bộ",
+        "license_class": metadata(r"Hạng:\s*([A-Za-z0-9]+)", title, "A1"),
+        "course": metadata(r"Khóa:\s*([A-Za-z0-9]+)", title),
+        "exam_date": metadata(r"Ngày thi:\s*([0-9\-/.]+)", dates),
+    }
+    rows = iter(sheet.values)
+    for row in rows:
+        roles = tuple(PAGE_ROLE if _excel_text(value).casefold() in {"trang pdf", "trang", "số trang pdf"}
+                      else source_column_role(value) for value in row)
+        if "full_name" in roles and {"stt", "license_number", PAGE_ROLE}.intersection(roles):
+            return cover, list(_excel_rows(rows, roles, total_pages, legacy=True))
+    raise ValueError("Không tìm thấy tiêu đề danh sách GPLX trong Excel dạng cũ.")
 
 def remove_vietnamese_accents(text: str) -> str:
     """
@@ -133,13 +240,18 @@ class DatabaseManager:
         """
         Inserts or updates a dossier and its citizen records into SQLite.
         """
+        pdf_path, excel_path = os.path.abspath(pdf_path), os.path.abspath(excel_path)
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
             # Delete existing dossier if any
-            cursor.execute("SELECT id FROM dossiers WHERE final_filename = ?", (final_filename,))
+            cursor.execute("SELECT id, pdf_path FROM dossiers WHERE final_filename = ?", (final_filename,))
             row = cursor.fetchone()
             if row:
+                existing = row["pdf_path"]
+                if (os.path.isfile(existing) and os.path.normcase(os.path.realpath(existing))
+                        != os.path.normcase(os.path.realpath(pdf_path))):
+                    raise FileExistsError(f"CSDL đã có hồ sơ cùng tên tại thư mục khác: {final_filename}.pdf")
                 dossier_id = row["id"]
                 # Delete old FTS entries
                 cursor.execute("DELETE FROM citizens_fts WHERE rowid IN (SELECT id FROM citizens WHERE dossier_id = ?)", (dossier_id,))
@@ -176,7 +288,7 @@ class DatabaseManager:
             for c in citizens:
                 fn = c.get("full_name", "").strip()
                 fn_unacc = remove_vietnamese_accents(fn)
-                lic_no = c.get("license_number", "").strip().upper()
+                lic_no = _lookup_license(c.get("license_number"))
                 stt_val = c.get("stt", 1)
                 by_val = str(c.get("birth_year", "")).strip()
                 nat_val = c.get("nationality", "Việt Nam").strip()
@@ -388,74 +500,38 @@ class DatabaseManager:
                 "total_citizens": total_citizens
             }
 
-    def reindex_from_directory(self, root_dir: str) -> int:
+    def reindex_from_directory(self, root_dir: str, *, errors=None) -> int:
         """
         Scans a directory for companion .xlsx files and re-indexes them into SQLite.
         """
         indexed_count = 0
         for root, _, files in os.walk(root_dir):
+            pdfs = {os.path.splitext(f)[0].casefold(): f for f in files if f.lower().endswith(".pdf")}
             for f in files:
-                if f.endswith(".xlsx") and not f.startswith("So_Theo_Doi_"):
+                if f.lower().endswith(".xlsx") and not f.lower().startswith(("so_theo_doi_", "~$", ".gplx-")):
                     excel_path = os.path.join(root, f)
                     base_name = f[:-5]
-                    pdf_path = os.path.join(root, f"{base_name}.pdf")
-                    if os.path.exists(pdf_path):
+                    pdf_name = pdfs.get(base_name.casefold())
+                    if pdf_name:
+                        pdf_path = os.path.join(root, pdf_name)
                         try:
-                            self._index_single_excel(excel_path, pdf_path, base_name)
+                            self._index_single_excel(excel_path, pdf_path, os.path.splitext(pdf_name)[0])
                             indexed_count += 1
                         except Exception as e:
-                            print(f"Error reindexing {excel_path}: {e}")
+                            logger.exception("Could not index workbook %s", excel_path)
+                            if errors is not None:
+                                errors.append((f, str(e)))
         return indexed_count
 
     def _index_single_excel(self, excel_path: str, pdf_path: str, final_filename: str):
-        wb = openpyxl.load_workbook(excel_path, data_only=True)
-        ws = wb.active
-        
-        # Parse metadata from top rows
-        title_meta = str(ws["A2"].value or "")
-        date_meta = str(ws["A3"].value or "")
-        
-        # Extract province code
-        prov_match = re.search(r"Mã tỉnh:\s*([0-9]+)", title_meta)
-        prov_code = prov_match.group(1) if prov_match else "15"
-
-        hang_match = re.search(r"Hạng:\s*([A-Za-z0-9]+)", title_meta)
-        hang = hang_match.group(1) if hang_match else "A1"
-
-        khoa_match = re.search(r"Khóa:\s*([A-Za-z0-9]+)", title_meta)
-        khoa = khoa_match.group(1) if khoa_match else ""
-
-        date_match = re.search(r"Ngày thi:\s*([0-9\-/.]+)", date_meta)
-        exam_date = date_match.group(1) if date_match else ""
-
-        citizens = []
-        for r in range(6, ws.max_row + 1):
-            stt_val = ws.cell(row=r, column=1).value
-            name_val = ws.cell(row=r, column=2).value
-            if not name_val:
-                continue
-            citizens.append({
-                "stt": stt_val or (r - 5),
-                "full_name": str(name_val).strip(),
-                "birth_year": str(ws.cell(row=r, column=3).value or "").strip(),
-                "nationality": str(ws.cell(row=r, column=4).value or "Việt Nam").strip(),
-                "address": str(ws.cell(row=r, column=5).value or "").strip(),
-                "license_number": str(ws.cell(row=r, column=6).value or "").strip(),
-                "page_number": int(ws.cell(row=r, column=7).value or 1)
-            })
-
-        cover_meta = {
-            "province_code": prov_code,
-            "book_type": "Sổ gốc cấp bằng lái xe cơ giới đường bộ",
-            "license_class": hang,
-            "course": khoa,
-            "exam_date": exam_date,
-            "box": "48",
-            "box_number": "115",
-            "total_pages": max([c["page_number"] for c in citizens]) if citizens else 1,
-            "license_sequence": "",
-            "status_note": "Đủ"
-        }
+        total_pages = get_pdf_page_count(pdf_path)
+        workbook = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+        try:
+            reader = _read_source_workbook if WORKBOOK_METADATA in workbook.sheetnames else _read_legacy_workbook
+            cover_meta, citizens = reader(workbook, total_pages)
+        finally:
+            workbook.close()
+        cover_meta["total_pages"] = total_pages
 
         self.insert_or_update_dossier(
             final_filename=final_filename,

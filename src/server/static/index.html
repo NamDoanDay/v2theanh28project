@@ -620,6 +620,8 @@
 
       rows.forEach((row, idx) => {
         const tr = document.createElement("tr");
+        const parsedPage = Number(row.page_number);
+        const pageNumber = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
         const boxInfo = (row.box && row.box_number) 
           ? `HỘP ${row.box} - H.SỐ ${row.box_number}`
@@ -634,17 +636,20 @@
             <span class="license-badge">${escapeHtml(row.license_number || "")}</span>
           </td>
           <td style="text-align: center;">${escapeHtml(row.license_class || "A1")}</td>
-          <td style="font-size: 12.5px; color: #475569;">${boxInfo}</td>
-          <td style="text-align: center; font-weight: 600; color: #2563EB;">Trang ${row.page_number || 1}</td>
+          <td style="font-size: 12.5px; color: #475569;">${escapeHtml(boxInfo)}</td>
+          <td style="text-align: center; font-weight: 600; color: #2563EB;">Trang ${pageNumber}</td>
           <td style="text-align: center; white-space: nowrap;">
-            <button class="action-btn btn-view-pdf" onclick="openPdfModal('${encodeURIComponent(row.pdf_path || '')}', ${row.page_number || 1}, '${escapeHtml(row.full_name || '')}')">
-              👁️ Xem Trang ${row.page_number || 1}
+            <button class="action-btn btn-view-pdf" type="button">
+              👁️ Xem Trang ${pageNumber}
             </button>
             <a class="action-btn btn-dl-excel" href="/api/excel?path=${encodeURIComponent(row.excel_path || '')}" download>
               📊 Tải Excel
             </a>
           </td>
         `;
+        tr.querySelector(".btn-view-pdf").addEventListener("click", () => {
+          openPdfModal(encodeURIComponent(row.pdf_path || ""), pageNumber, row.full_name || "");
+        });
         tbody.appendChild(tr);
       });
     }

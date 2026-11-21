@@ -535,8 +535,13 @@ class SearchScreenFrame(ctk.CTkFrame):
             return
 
         try:
-            count = self.db.reindex_from_directory(folder)
+            errors = []
+            count = self.db.reindex_from_directory(folder, errors=errors)
             self.refresh_stats()
-            messagebox.showinfo("Đồng bộ Thành công", f"Đã quét và đồng bộ thành công {count} cuốn sổ vào CSDL!")
+            if errors:
+                details = "\n".join(f"• {name}: {error}" for name, error in errors[:4])
+                messagebox.showwarning("Kết quả đồng bộ", f"Đã đồng bộ {count} cuốn sổ. Có {len(errors)} file gặp lỗi.\n\n{details}")
+            else:
+                messagebox.showinfo("Đồng bộ thành công", f"Đã đồng bộ {count} cuốn sổ vào CSDL.")
         except Exception as e:
             messagebox.showerror("Lỗi đồng bộ", f"Có lỗi xảy ra khi quét thư mục:\n{e}")

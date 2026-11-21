@@ -328,7 +328,10 @@ def commit_dossier(
     final_filename: str,
     cover_meta: Dict[str, Any],
     citizens: List[Dict[str, Any]],
-    output_dir: Optional[str] = None
+    output_dir: Optional[str] = None,
+    *,
+    source_tables=None,
+    source_stamp=None,
 ) -> Dict[str, Any]:
     """
     Executes the rename, companion Excel generation, and updates Master Summary:
@@ -339,6 +342,8 @@ def commit_dossier(
     """
     if not is_valid_windows_filename_stem(final_filename):
         raise ValueError("Tên file không hợp lệ cho Windows. Nhập tên và bỏ phần đuôi .pdf.")
+    if source_stamp is not None and _pdf_cache_key(original_pdf_path)[1:] != tuple(source_stamp):
+        raise ValueError("PDF gốc đã thay đổi sau khi đọc. Hãy đọc lại hồ sơ trước khi xuất Excel.")
 
     # If output_dir is not specified, save in-place directly in the uploaded file's folder
     if not output_dir:
@@ -350,10 +355,17 @@ def commit_dossier(
     target_xlsx = os.path.join(output_dir, f"{final_filename}.xlsx")
     
     # Safe copy without deleting original file
-    _copy_named_pdf(original_pdf_path, target_pdf)
+    copied = _copy_named_pdf(original_pdf_path, target_pdf)
     
-    # Generate matching Excel companion
-    generate_excel_companion(cover_meta, citizens, target_xlsx)
+    try:
+        generate_excel_companion(cover_meta, citizens, target_xlsx, source_tables=source_tables, pdf_path=target_pdf)
+    except Exception:
+        if copied:
+            try:
+                os.unlink(target_pdf)
+            except OSError:
+                logger.exception("Could not clean up PDF after Excel export failed: %s", target_pdf)
+        raise
 
     # Master summary update: place at province root folder
     prov_code = cover_meta.get("province_code", "15")
@@ -364,6 +376,7 @@ def commit_dossier(
     update_or_append_summary_entry(summary_path, _summary_record(final_filename, cover_meta, len(citizens)))
 
     # 4. Zero-Config Database Sync into SQLite
+    db_error = None
     try:
         db = DatabaseManager()
         db.insert_or_update_dossier(
@@ -373,8 +386,9 @@ def commit_dossier(
             pdf_path=target_pdf,
             excel_path=target_xlsx
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("SQLite sync failed for %s", final_filename)
+        db_error = str(exc)
     
     return {
         "success": True,
@@ -383,6 +397,7 @@ def commit_dossier(
         "master_summary_path": summary_path,
         "original_kept": original_pdf_path,
         "total_citizens": len(citizens),
+        "db_error": db_error,
         "final_filename": final_filename
     }
 

@@ -44,6 +44,10 @@ _MERGED = (
 _LICENSE_CONFIDENCE = 0.70
 
 
+def source_column_role(label):
+    return _ROLES.get(_key(str(label or "")), "other")
+
+
 @dataclass(frozen=True)
 class Box:
     text: str
@@ -215,6 +219,8 @@ def _read_rows(boxes, columns, start, end, grid, page_number):
     roles = [c["role"] for c in columns]
     name_index = roles.index("full_name")
     stt_index = roles.index("stt") if "stt" in roles else None
+    register_index = roles.index("register_index") if "register_index" in roles else None
+    license_index = roles.index("license_number") if roles.count("license_number") == 1 else None
     boxes = [b for b in boxes if start <= b.y < end and columns[0]["left"] <= b.x < columns[-1]["right"]]
     totals = [b.y0 for b in boxes if _key(b.text) in {"tongcong", "cong", "congdon", "tongso"} or _other_section(b.text)]
     if totals:
@@ -241,13 +247,20 @@ def _read_rows(boxes, columns, start, end, grid, page_number):
             not entries or b.y - entries[-1][0].y > glyph * .67
         ):
             entries.append((b, b.score >= .62))
-    if stt_index is not None:
+    anchors = (
+        (stt_index, lambda text: re.fullmatch(r"[0-9]{1,4}[.)]?", text), 0),
+        (register_index, lambda text: re.fullmatch(r"[0-9]{4,12}", text), .70),
+        (license_index, _license, _LICENSE_CONFIDENCE),
+    )
+    for index, is_anchor, confidence in anchors:
+        if index is None:
+            continue
         for box in boxes:
-            if not in_column(box, columns[stt_index]) or not re.fullmatch(r"[0-9]{1,4}[.)]?", box.text):
+            if not in_column(box, columns[index]) or box.score < confidence or not is_anchor(box.text):
                 continue
             if any(abs(entry.y - box.y) <= glyph for entry, _ in entries):
                 continue
-            if any(abs(other.y - box.y) <= glyph and (
+            if any(other is not box and abs(other.y - box.y) <= glyph and (
                 _license(other.text) or any(in_column(other, c) and re.fullmatch(r"[0-9]{4}", other.text)
                                             for c in columns if c["role"] == "birth_year")
             ) for other in boxes):
@@ -423,20 +436,29 @@ class LicenseTableExtractor:
                     previous.setdefault("unresolved_pages", []).append(page_number)
 
 
+def project_citizen(values, *, stt, page_number, license_number):
+    """Keep the lookup representation consistent for OCR and Excel imports."""
+    return {
+        "stt": stt,
+        "page_number": page_number,
+        "full_name": restore_vietnamese_name(values.get("full_name", "")),
+        "birth_year": values.get("birth_year", ""),
+        "address": normalize_vietnamese_address(values.get("address", "")),
+        "nationality": normalize_nationality(values["nationality"]) if values.get("nationality") else "",
+        "license_number": license_number,
+    }
+
+
 def table_citizens(table):
     """Project source rows onto the fields used by the current review and search."""
     roles = [c["role"] for c in table["columns"]]
     citizens = []
     for position, row in enumerate(table["rows"], start=1):
         values = dict(zip(roles, row["cells"]))
-        citizens.append({
-            "stt": row["stt"] if row["stt"] is not None else position,
-            "page_number": row["page_number"],
-            "full_name": restore_vietnamese_name(values.get("full_name", "")),
-            "birth_year": values.get("birth_year", ""),
-            "address": normalize_vietnamese_address(values.get("address", "")),
-            "nationality": normalize_nationality(values["nationality"]) if values.get("nationality") else "",
-            "license_number": row["license_number"],
-            "license_state": row["license_state"],
-        })
+        citizen = project_citizen(
+            values, stt=row["stt"] if row["stt"] is not None else position,
+            page_number=row["page_number"], license_number=row["license_number"],
+        )
+        citizen["license_state"] = row["license_state"]
+        citizens.append(citizen)
     return citizens

@@ -7,7 +7,6 @@ import io
 import socket
 import threading
 import time
-import urllib.parse
 from typing import Optional, Dict, Any, List
 
 import uvicorn
@@ -131,18 +130,15 @@ async def stream_pdf(path: str = Query(..., description="Đường dẫn tuyệt
     """
     Streams PDF file safely over LAN for browser viewing with page jumping support.
     """
-    decoded_path = urllib.parse.unquote(path)
-    if not os.path.exists(decoded_path) or not decoded_path.lower().endswith(".pdf"):
+    if not os.path.isfile(path) or not path.lower().endswith(".pdf"):
         raise HTTPException(status_code=404, detail="Không tìm thấy tệp PDF hoặc định dạng không hợp lệ.")
     
-    filename = os.path.basename(decoded_path)
     return FileResponse(
-        decoded_path,
+        path,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'inline; filename="{filename}"',
-            "Accept-Ranges": "bytes"
-        }
+        filename=os.path.basename(path),
+        content_disposition_type="inline",
+        headers={"Accept-Ranges": "bytes"},
     )
 
 @app.get("/api/excel")
@@ -150,17 +146,13 @@ async def download_excel(path: str = Query(..., description="Đường dẫn t�
     """
     Serves the companion Excel file for downloading by LAN client PCs.
     """
-    decoded_path = urllib.parse.unquote(path)
-    if not os.path.exists(decoded_path) or not decoded_path.lower().endswith(".xlsx"):
+    if not os.path.isfile(path) or not path.lower().endswith(".xlsx"):
         raise HTTPException(status_code=404, detail="Không tìm thấy tệp Excel.")
     
-    filename = os.path.basename(decoded_path)
     return FileResponse(
-        decoded_path,
+        path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
+        filename=os.path.basename(path),
     )
 
 @app.get("/api/qr")

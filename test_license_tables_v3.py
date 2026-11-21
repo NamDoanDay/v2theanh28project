@@ -118,6 +118,32 @@ class LicenseTablesV3Test(unittest.TestCase):
         self.assertTrue(summarize_license_table(table)["license_column_empty"])
         self.assertEqual(table["rows"][0]["cells"][3:5], ["AP014542", ""])
 
+    def test_register_number_preserves_row_when_ocr_joins_name_and_misses_stt(self):
+        headers = ("STT", "Họ và tên", "Năm sinh", "Số TT bảng kê", "Số giấy phép", "Ngày cấp")
+        self.read(1, (60, headers, [
+            ("1", "Nguyễn Văn A", "1982", "170656", None, "01/06/2010"),
+            (None, "HàVũ", "1989", "170657", None, "01/06/2010"),
+            ("3", "Nguyễn Văn B", "1985", "170658", None, "01/06/2010"),
+        ]))
+        table, = self.extractor.tables
+        self.assertEqual([r["cells"][3] for r in table["rows"]], ["170656", "170657", "170658"])
+        middle = table["rows"][1]
+        self.assertIsNone(middle["stt"])
+        self.assertFalse(middle["identity_confident"])
+        self.assertEqual(middle["cells"][1], "HàVũ")
+        self.assertEqual(middle["license_state"], "blank")
+
+    def test_known_license_column_and_birth_year_preserve_row_without_recognized_name(self):
+        self.read(1, (60, HEADERS, [
+            row(1, "AP014542"),
+            (None, "HàVũ", "1989", "Tỉnh Yên Bái", "AP014543", "01/06/2010"),
+            row(3, "AP014544"),
+            (None, None, None, None, "AP014545", None),
+        ]))
+        table, = self.extractor.tables
+        self.assertEqual([r["license_number"] for r in table["rows"]], ["AP014542", "AP014543", "AP014544"])
+        self.assertFalse(table["rows"][1]["identity_confident"])
+
     def test_ink_and_low_confidence_are_not_verified_blank(self):
         self.read(1, (60, HEADERS, [
             row(1, ("AP014542", .45)), row(2, ("OCR missed", None)), row(3, "AP014544"),

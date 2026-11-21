@@ -116,7 +116,7 @@ Giao diện Tab 1 gồm **3 cột làm việc trực quan** có thể kéo giãn
   * Bấm nút: **`💾 Xác nhận: Đổi tên PDF & Xuất Excel & Cập nhật Tổng hợp`**.
   * Hệ thống tự động:
     1. Tạo file PDF chuẩn mới mang tên quy định tại đúng thư mục đó.
-    2. Tạo file Excel con tương ứng với STT chạy tuần tự 1..N và tiếng Việt có dấu chuẩn xác.
+    2. Tạo file Excel con với một sheet cho mỗi danh sách GPLX. Excel giữ thứ tự cột, dữ liệu OCR, ô trống và số trang PDF. Ô ảnh hoặc chữ ký cần kiểm tra thêm có ghi chú đối chiếu.
     3. Cập nhật dòng mới vào File Excel Tổng Hợp Cấp Tỉnh.
     4. Giữ nguyên 100% file gốc cũ.
     5. Đồng bộ tức thì vào CSDL SQLite phục vụ tra cứu.
@@ -201,7 +201,7 @@ Cho phép các máy tính khác hoặc máy tính bảng/điện thoại trong c
 ## 9. XỬ LÝ SỰ CỐ THƯỜNG GẶP (FAQ)
 
 1. **Hỏi**: Nếu tôi sửa trực tiếp file Excel con bằng Microsoft Excel ngoài desktop thì CSDL có cập nhật không?
-   * **Trả lời**: Có. Bạn chỉ cần vào Tab Tra Cứu, bấm nút **`🔄 Quét lại từ Excel`** và chọn thư mục, hệ thống sẽ tự động đồng bộ lại toàn bộ dữ liệu mới nhất vào SQLite.
+   * **Trả lời**: Có. Vào tab Tra cứu, bấm **`🔄 Quét lại từ Excel`** và chọn thư mục chứa các cặp PDF và Excel cùng tên. Ứng dụng đọc cả Excel cũ và Excel động để cập nhật các trường tra cứu. Giữ cột **Trang PDF** để kết quả mở đúng trang. Nếu có file gặp lỗi, ứng dụng hiển thị thông báo sau khi quét.
 2. **Hỏi**: File PDF gốc ban đầu của tôi có bị xóa mất sau khi đổi tên không?
    * **Trả lời**: Tuyệt đối không. Hệ thống áp dụng cơ chế sao chép an toàn (Safe Copy), file scan gốc cũ luôn được giữ nguyên 100%.
 3. **Hỏi**: Máy phụ trong phòng không kết nối được vào địa chỉ mạng LAN?

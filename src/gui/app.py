@@ -258,13 +258,17 @@ class GPLXApp(ctk.CTk):
         try:
             # Save directly into the same folder where the file was uploaded
             target_folder = os.path.dirname(os.path.abspath(original_path))
+            data = self.review.current_data or {}
+            source = data if data.get("original_path") == original_path else {}
             
             res = commit_dossier(
                 original_pdf_path=original_path,
                 final_filename=final_filename,
                 cover_meta=cover_meta,
                 citizens=citizens,
-                output_dir=target_folder
+                output_dir=target_folder,
+                source_tables=source.get("tables"),
+                source_stamp=source.get("source_stamp"),
             )
 
             # Update sidebar status
@@ -282,10 +286,12 @@ class GPLXApp(ctk.CTk):
                 f"• PDF chuẩn mới: {os.path.basename(res['pdf_path'])}\n"
                 f"• File Excel con: {os.path.basename(res['excel_path'])}\n"
                 f"• Cập nhật Sổ theo dõi tỉnh: {os.path.basename(res['master_summary_path'])}\n"
-                f"• Tệp gốc ({os.path.basename(original_path)}) vẫn được giữ nguyên toàn vẹn!\n"
-                f"• Đồng bộ vào CSDL tìm kiếm: {res['total_citizens']} công dân."
+                f"• Tệp gốc ({os.path.basename(original_path)}) được giữ nguyên.\n"
             )
-            messagebox.showinfo("Thành công", msg)
+            if res["db_error"]:
+                messagebox.showwarning("Đã lưu hồ sơ, lỗi đồng bộ CSDL", msg + f"• Lỗi đồng bộ: {res['db_error']}")
+            else:
+                messagebox.showinfo("Thành công", msg + f"• Đồng bộ vào CSDL tìm kiếm: {res['total_citizens']} công dân.")
 
             # Automatically select next ready item
             self._select_next_item()

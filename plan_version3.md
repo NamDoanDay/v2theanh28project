@@ -1,6 +1,6 @@
 # Kế hoạch GPLX phiên bản 3
 
-**Trạng thái** — Phase 1–4 hoàn thành. Các quyết định nghiệp vụ Q1–Q8 đã được chốt trong buổi phỏng vấn `grill-me`.
+**Trạng thái** — Phase 1–5 hoàn thành. Các quyết định nghiệp vụ Q1–Q8 đã được chốt trong buổi phỏng vấn `grill-me`.
 
 **Kết quả cần đạt** — Ứng dụng nhận diện được nhiều mẫu hồ sơ GPLX, đề xuất tên PDF theo đúng giai đoạn, cho phép rà soát từng file trong thư mục và xuất Excel phản ánh bảng nguồn trong luồng số hóa đầy đủ.
 
@@ -89,6 +89,8 @@ Lấy **ngày thi hoặc ngày sát hạch** để chọn nhóm. Ngày ghi trong
 
 ## Phase 5 — Excel động và tương thích chức năng tra cứu
 
+**Trạng thái** — Hoàn thành.
+
 **Phạm vi**
 
 - Cập nhật `src/excel_generator.py` để xuất tiêu đề, thứ tự cột và dữ liệu theo bảng gốc trong luồng số hóa đầy đủ. Giữ cột trống, giá trị chữ, mã có số 0 đầu và số trang PDF để đối chiếu. Với nhiều danh sách độc lập có cấu trúc khác nhau, đề xuất một sheet cho mỗi danh sách trong cùng file Excel.
@@ -96,6 +98,8 @@ Lấy **ngày thi hoặc ngày sát hạch** để chọn nhóm. Ngày ghi trong
 - Dùng các trường chuẩn hóa phục vụ SQLite và tra cứu, đồng thời giữ các cột nguồn trong Excel. Cập nhật luồng **Đồng bộ từ Excel** trong `src/database.py` vì hiện tại đang đọc theo vị trí cột cố định. Bảo đảm cả workbook mới và workbook cũ đều có thể đồng bộ, giữ đúng liên kết tới trang PDF.
 
 **Nghiệm thu** — So sánh Excel với ảnh 11–13 theo tên cột, thứ tự, số hàng, ô trống và dữ liệu từng ô. Kiểm tra vị trí ảnh hoặc trạng thái cần đối chiếu. Đồng bộ được cả Excel cũ và mới, tìm được hồ sơ, mở được đúng trang PDF trên desktop và qua luồng tra cứu LAN hiện có.
+
+**Kết quả kiểm tra** — Chạy OCR trên PDF được ghép từ ảnh 11–13. Excel có ba sheet với lần lượt 8, 13 và 6 cột nguồn, giữ dữ liệu OCR theo đúng ô và đủ 25 dòng. Năm ô Số giấy phép trống ở ảnh 12 vẫn để trống. Ảnh và chữ ký trên hai mẫu scan được đánh dấu cần đối chiếu vì chưa xác nhận được vùng cắt. Bài kiểm tra có vùng ảnh và chữ ký nằm gọn trong ô xác nhận ảnh được nhúng đúng dòng. SQLite đọc được cả Excel cũ và mới, giữ đúng trang khi đồng bộ lại sau khi sửa dữ liệu. Bộ 38 bài kiểm tra tự động đạt. Đã kiểm tra lệnh mở đúng trang ở desktop, API LAN và liên kết trang trong mã giao diện web. Chưa thao tác trực tiếp trên giao diện hay build lại EXE.
 
 ## Phase 6 — Chạy thử trên bộ hồ sơ đại diện và bàn giao
 
