@@ -112,9 +112,14 @@ class GPLXApp(ctk.CTk):
             self.paned,
             width=580,
             on_confirm_callback=self.on_confirm_commit,
-            on_page_jump_callback=self.on_page_jump
+            on_page_jump_callback=self.on_page_jump,
+            on_skip_callback=self.on_skip_next,
         )
         self.paned.add(self.review, minsize=420, width=580)
+
+    def on_skip_next(self):
+        """Advances to the next dossier in queue when skipped."""
+        self._select_next_item(after=self.active_item)
 
     def _build_search_tab(self):
         self.search_screen = SearchScreenFrame(

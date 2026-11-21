@@ -59,22 +59,32 @@ def parse_folder_hierarchy(pdf_path: str) -> Dict[str, str]:
         
     return info
 
+def _is_system_or_user_root(path_obj: Path) -> bool:
+    """Check if path is a top-level user directory like Desktop, Documents, or drive root."""
+    resolved = path_obj.resolve()
+    home = Path.home().resolve()
+    if resolved == home or resolved in home.parents or len(resolved.parts) <= 2:
+        return True
+    # Check common user directories: Desktop, Downloads, Documents, etc.
+    if resolved.parent == home and resolved.name.lower() in {
+        "desktop", "documents", "downloads", "pictures", "videos", "music"
+    }:
+        return True
+    return False
+
+
 def find_province_root_dir(pdf_path: str) -> str:
     """
     Finds the province root folder in the path hierarchy:
     E.g. D:/Data/LaoCai/HOP_48/HOP_SO_115/scan.pdf -> D:/Data/LaoCai
-    If path is less than 3 levels deep, returns the immediate directory of the PDF.
+    If path is less than 3 levels deep or parent is a system folder, returns the immediate directory of the PDF.
     """
     abs_dir = os.path.dirname(os.path.abspath(pdf_path))
     parts = abs_dir.replace("\\", "/").split("/")
     
-    # Check if grandparent is Hộp and great-grandparent is Province
     if len(parts) >= 3:
-        # Check if parent folder looks like Hộp số / Ho so
-        # and grandparent looks like Hộp / Tu
-        # Then province root is 2 levels above:
         prov_dir = os.path.abspath(os.path.join(abs_dir, "..", ".."))
-        if os.path.exists(prov_dir):
+        if os.path.exists(prov_dir) and not _is_system_or_user_root(Path(prov_dir)):
             return prov_dir
 
     return abs_dir
@@ -96,10 +106,15 @@ def folder_review_location(pdf_path: str) -> Dict[str, str]:
             root = archive_province = next_folder
         elif re.fullmatch(r"(?:hopso|hoso)(?:\d+|[a-z][a-z0-9]*)", key):
             box_number = extract_clean_number_or_name(folder.name)
-            if not box and root == parent:
+            if not box and root == parent and not _is_system_or_user_root(folder.parent):
                 root = folder.parent
         elif not box and re.fullmatch(r"(?:hop|tu)\d+", key):
             if not archive_province or archive_province == folder:
-                root = folder.parent
+                if not _is_system_or_user_root(folder.parent):
+                    root = folder.parent
+                else:
+                    root = folder
             box = extract_clean_number_or_name(folder.name)
+    if _is_system_or_user_root(root):
+        root = parent
     return {"province_root": str(root), "province_folder": root.name, "box": box, "box_number": box_number}

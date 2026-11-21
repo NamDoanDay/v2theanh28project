@@ -127,11 +127,82 @@ def summarize_license_table(table):
     }
 
 
+def _fast_find_license_endpoints(pdf_path: str, total_pages: int, opening_ocr=None):
+    """
+    Ultra-fast dynamic scan for first and last GPLX license numbers without reading every page.
+    1. Scans forward from page 0 up to min(total_pages, 5) for the first valid GPLX table.
+    2. Scans backward from total_pages - 1 down to the first table page for the last GPLX table.
+    """
+    first_lic = ""
+    last_lic = ""
+    first_page_idx = -1
+    first_table = None
+
+    with open_pdf(pdf_path) as pdf:
+        # 1. Forward scan to find first table
+        for idx in range(min(total_pages, 5)):
+            if idx == 0 and opening_ocr is not None:
+                ocr_result, img_size = opening_ocr
+                with render_pdf_page(pdf, 0) as image:
+                    grid = measure_page_grid(image)
+            else:
+                with render_pdf_page(pdf, idx) as image:
+                    ocr_result, _ = run_ocr(image)
+                    img_size = image.size
+                    grid = measure_page_grid(image)
+
+            extractor = LicenseTableExtractor()
+            extractor.read_page(ocr_result, img_size, grid, idx + 1)
+            if extractor.tables and extractor.tables[0]["rows"]:
+                table = extractor.tables[0]
+                rows = table["rows"]
+                for r in rows:
+                    if r.get("license_number"):
+                        first_lic = r["license_number"]
+                        break
+                if not first_lic and rows:
+                    first_lic = rows[0].get("license_number", "")
+                first_page_idx = idx
+                first_table = table
+                break
+
+        # 2. Backward scan to find last table
+        if first_page_idx != -1:
+            if first_page_idx == total_pages - 1 or total_pages == 1:
+                rows = first_table["rows"]
+                for r in reversed(rows):
+                    if r.get("license_number"):
+                        last_lic = r["license_number"]
+                        break
+                if not last_lic and rows:
+                    last_lic = rows[-1].get("license_number", "")
+            else:
+                for idx in range(total_pages - 1, first_page_idx - 1, -1):
+                    with render_pdf_page(pdf, idx) as image:
+                        ocr_result, _ = run_ocr(image)
+                        img_size = image.size
+                        grid = measure_page_grid(image)
+                    extractor = LicenseTableExtractor()
+                    extractor.read_page(ocr_result, img_size, grid, idx + 1)
+                    if extractor.tables and extractor.tables[0]["rows"]:
+                        table = extractor.tables[0]
+                        rows = table["rows"]
+                        for r in reversed(rows):
+                            if r.get("license_number"):
+                                last_lic = r["license_number"]
+                                break
+                        if not last_lic and rows:
+                            last_lic = rows[-1].get("license_number", "")
+                        break
+
+    return first_lic, last_lic, first_table
+
+
 def process_dossier_pdf(pdf_path: str, default_province: str = "", *, rename_only: bool = False) -> Dict[str, Any]:
     """
     Processes a raw digitized PDF:
     1. Reads document metadata on the opening page
-    2. Reads OCR and table data one page at a time
+    2. Reads OCR and table data (fast scan for rename_only, full scan for digitization)
     4. Analyzes license sequences and continuity
     5. Extracts folder metadata (Hộp, Hộp số)
     6. Generates proposed standard filename
@@ -143,10 +214,8 @@ def process_dossier_pdf(pdf_path: str, default_province: str = "", *, rename_onl
     folder_info = folder_review_location(pdf_path) if rename_only else parse_folder_hierarchy(pdf_path)
 
     key = _pdf_cache_key(pdf_path)
-    cached_cover, total_pages, _ = _cached_opening(key)
+    cached_cover, total_pages, opening_ocr = _cached_opening(key)
     cover_meta = deepcopy(cached_cover)
-    tables = deepcopy(_cached_tables(key))
-    all_citizens = [] if rename_only else [row for table in tables for row in table_citizens(table)]
     
     cover_meta["suggested_province_code"] = cover_meta["province_code"]
     cover_meta["province_code"] = default_province if default_province != "auto" else ""
@@ -157,13 +226,28 @@ def process_dossier_pdf(pdf_path: str, default_province: str = "", *, rename_onl
     # Attach folder metadata
     cover_meta["box"] = folder_info.get("box", "48")
     cover_meta["box_number"] = folder_info.get("box_number", "115")
-
-    stats = summarize_license_table(tables[0] if len(tables) == 1 else None)
-    seq_analysis = stats.pop("sequence_analysis")
-    cover_meta.update(stats)
-    if len(tables) > 1:
-        cover_meta["table_review"] = "Có nhiều danh sách GPLX. Hãy chọn danh sách dùng để đặt tên."
     cover_meta["total_pages"] = total_pages
+
+    if rename_only:
+        # Fast endpoint scan: only 2-3 pages scanned
+        first_lic, last_lic, first_table = _fast_find_license_endpoints(pdf_path, total_pages, opening_ocr)
+        cover_meta["first_license_no"] = first_lic
+        cover_meta["last_license_no"] = last_lic
+        cover_meta["license_column_empty"] = False
+        tables = [first_table] if first_table else []
+        all_citizens = []
+        seq_analysis = {
+            "sequence_summary": f"{first_lic}-{last_lic}" if first_lic and last_lic else "",
+            "status": "Đủ",
+        }
+    else:
+        tables = deepcopy(_cached_tables(key))
+        all_citizens = [row for table in tables for row in table_citizens(table)]
+        stats = summarize_license_table(tables[0] if len(tables) == 1 else None)
+        seq_analysis = stats.pop("sequence_analysis")
+        cover_meta.update(stats)
+        if len(tables) > 1:
+            cover_meta["table_review"] = "Có nhiều danh sách GPLX. Hãy chọn danh sách dùng để đặt tên."
 
     # 5. Generate Standardized Filename
     proposal = propose_dossier_filename(
@@ -172,9 +256,9 @@ def process_dossier_pdf(pdf_path: str, default_province: str = "", *, rename_onl
         exam_date=cover_meta["exam_date"],
         decision_number=cover_meta.get("decision_number", ""),
         decision_date=cover_meta.get("decision_date", ""),
-        first_license_no=cover_meta["first_license_no"],
-        last_license_no=cover_meta["last_license_no"],
-        license_column_empty=cover_meta["license_column_empty"],
+        first_license_no=cover_meta.get("first_license_no", ""),
+        last_license_no=cover_meta.get("last_license_no", ""),
+        license_column_empty=cover_meta.get("license_column_empty", False),
     )
 
     return {
@@ -405,7 +489,7 @@ def fast_extract_rename_metadata(pdf_path: str, default_province: str = "") -> s
     """Read the header first. SQL names also need the endpoints of a unique GPLX list."""
     logger.info("Folder rename: opening PDF %s", pdf_path)
     key = _pdf_cache_key(pdf_path)
-    cover_meta, total_pages, _ = _cached_opening(key)
+    cover_meta, total_pages, opening_ocr = _cached_opening(key)
     logger.info("Folder rename: PDF has %d pages, type=%s, review_fields=%s: %s",
                 total_pages, cover_meta["document_type"], list(cover_meta["metadata_review"]), pdf_path)
     fields = {
@@ -421,16 +505,13 @@ def fast_extract_rename_metadata(pdf_path: str, default_province: str = "") -> s
     if proposal.group != "SQL" or proposal.errors.keys() - {"first_license_no", "last_license_no"}:
         raise ValueError("Cần rà soát: " + " ".join(proposal.errors.values()))
 
-    tables = _cached_tables(key)
-    if len(tables) != 1:
-        reason = "Có nhiều danh sách GPLX. Hãy chọn danh sách trong màn hình duyệt." if tables else "Chưa tìm thấy danh sách GPLX."
-        raise ValueError("Cần rà soát: " + reason)
-    stats = summarize_license_table(tables[0])
+    first_lic, last_lic, _ = _fast_find_license_endpoints(pdf_path, total_pages, opening_ocr)
+    if not first_lic and not last_lic:
+        raise ValueError("Cần rà soát: Chưa tìm thấy danh sách GPLX.")
     proposal = propose_dossier_filename(
         **fields,
-        first_license_no=stats["first_license_no"],
-        last_license_no=stats["last_license_no"],
-        license_column_empty=stats["license_column_empty"],
+        first_license_no=first_lic,
+        last_license_no=last_lic,
     )
     if proposal.filename is None:
         raise ValueError("Cần rà soát: " + " ".join(proposal.errors.values()))

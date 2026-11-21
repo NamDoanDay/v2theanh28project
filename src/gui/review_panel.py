@@ -12,11 +12,12 @@ from src.naming_rules import DOSSIER_GROUPS, is_valid_windows_filename_stem, pro
 from src.pipeline import summarize_license_table
 
 class ReviewPanel(ctk.CTkFrame):
-    def __init__(self, master, on_confirm_callback: Callable, on_page_jump_callback: Callable, **kwargs):
+    def __init__(self, master, on_confirm_callback: Callable, on_page_jump_callback: Callable, on_skip_callback: Optional[Callable] = None, **kwargs):
         super().__init__(master, **kwargs)
         
         self.on_confirm_callback = on_confirm_callback
         self.on_page_jump_callback = on_page_jump_callback
+        self.on_skip_callback = on_skip_callback
         self.current_data: Optional[Dict[str, Any]] = None
         self.citizen_entries: List[Dict[str, Any]] = []
         self.table_options = {}
@@ -50,23 +51,26 @@ class ReviewPanel(ctk.CTkFrame):
         self.scroll_form.pack(fill="both", expand=True, padx=6, pady=2)
 
         # Card A: Metadata bìa & Hộp số
-        lbl_card_a = ctk.CTkLabel(self.scroll_form, text="THÔNG TIN BÌA SỔ & VỊ TRÍ HỒ SƠ", font=("Segoe UI", 12, "bold"))
-        lbl_card_a.pack(anchor="w", pady=(4, 2))
+        self.lbl_card_a = ctk.CTkLabel(self.scroll_form, text="THÔNG TIN BÌA SỔ & VỊ TRÍ HỒ SƠ", font=("Segoe UI", 12, "bold"))
+        self.lbl_card_a.pack(anchor="w", pady=(4, 2))
 
         self.card_a = ctk.CTkFrame(self.scroll_form, corner_radius=6)
         self.card_a.pack(fill="x", pady=2)
 
-        # Grid row 1: Loại sổ, Ngày bìa
-        ctk.CTkLabel(self.card_a, text="Loại sổ:").grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        # Grid row 0: Loại sổ
+        self.lbl_book_type = ctk.CTkLabel(self.card_a, text="Loại sổ:")
+        self.lbl_book_type.grid(row=0, column=0, sticky="w", padx=8, pady=4)
         self.txt_book_type = ctk.CTkEntry(self.card_a, height=28)
         self.txt_book_type.grid(row=0, column=1, columnspan=3, sticky="ew", padx=8, pady=4)
 
-        # Grid row 2: Ngày bìa, Hạng, Khóa
-        ctk.CTkLabel(self.card_a, text="Ngày thi/sát hạch:").grid(row=1, column=0, sticky="w", padx=8, pady=4)
+        # Grid row 1: Ngày bìa, Hạng, Khóa
+        self.lbl_cover_date = ctk.CTkLabel(self.card_a, text="Ngày thi/sát hạch:")
+        self.lbl_cover_date.grid(row=1, column=0, sticky="w", padx=8, pady=4)
         self.txt_cover_date = ctk.CTkEntry(self.card_a, width=120, height=28, textvariable=self.naming_fields["exam_date"])
         self.txt_cover_date.grid(row=1, column=1, sticky="w", padx=8, pady=4)
 
-        ctk.CTkLabel(self.card_a, text="Hạng / Khóa:").grid(row=1, column=2, sticky="w", padx=8, pady=4)
+        self.lbl_hang_khoa = ctk.CTkLabel(self.card_a, text="Hạng / Khóa:")
+        self.lbl_hang_khoa.grid(row=1, column=2, sticky="w", padx=8, pady=4)
         self.frame_hang_khoa = ctk.CTkFrame(self.card_a, fg_color="transparent")
         self.frame_hang_khoa.grid(row=1, column=3, sticky="w", padx=8, pady=4)
         self.txt_hang = ctk.CTkEntry(self.frame_hang_khoa, width=50, height=28)
@@ -74,16 +78,19 @@ class ReviewPanel(ctk.CTkFrame):
         self.txt_khoa = ctk.CTkEntry(self.frame_hang_khoa, width=60, height=28)
         self.txt_khoa.pack(side="left")
 
-        # Grid row 3: HỘP, HỘP SỐ
-        ctk.CTkLabel(self.card_a, text="HỘP (Tủ HS):").grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        # Grid row 2: HỘP, HỘP SỐ
+        self.lbl_box = ctk.CTkLabel(self.card_a, text="HỘP (Tủ HS):")
+        self.lbl_box.grid(row=2, column=0, sticky="w", padx=8, pady=4)
         self.txt_box = ctk.CTkEntry(self.card_a, width=120, height=28)
         self.txt_box.grid(row=2, column=1, sticky="w", padx=8, pady=4)
 
-        ctk.CTkLabel(self.card_a, text="HỘP SỐ (Hộp giấy):").grid(row=2, column=2, sticky="w", padx=8, pady=4)
+        self.lbl_box_number = ctk.CTkLabel(self.card_a, text="HỘP SỐ (Hộp giấy):")
+        self.lbl_box_number.grid(row=2, column=2, sticky="w", padx=8, pady=4)
         self.txt_box_number = ctk.CTkEntry(self.card_a, width=120, height=28)
         self.txt_box_number.grid(row=2, column=3, sticky="w", padx=8, pady=4)
 
-        ctk.CTkLabel(self.card_a, text="Mã tỉnh lưu trữ:").grid(row=3, column=0, sticky="w", padx=8, pady=4)
+        self.lbl_province = ctk.CTkLabel(self.card_a, text="Mã tỉnh lưu trữ:")
+        self.lbl_province.grid(row=3, column=0, sticky="w", padx=8, pady=4)
         self.cmb_province = ctk.CTkComboBox(
             self.card_a, values=list(self.province_options), state="readonly", command=self._on_province_selected,
         )
@@ -92,13 +99,14 @@ class ReviewPanel(ctk.CTkFrame):
         self.chk_province.grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=4)
         self.chk_province.grid_remove()
 
-        ctk.CTkLabel(self.card_a, text="Nhóm nếu thiếu ngày thi:").grid(row=5, column=0, sticky="w", padx=8)
+        self.lbl_group = ctk.CTkLabel(self.card_a, text="Nhóm quy tắc đặt tên:")
+        self.lbl_group.grid(row=5, column=0, sticky="w", padx=8)
         self.cmb_group = ctk.CTkOptionMenu(self.card_a, values=["Tự động", *DOSSIER_GROUPS], command=self._refresh_naming)
         self.cmb_group.grid(row=5, column=1, columnspan=3, sticky="w", padx=8, pady=4)
 
         for row, (field, label) in enumerate([
-            ("decision_number", "Số quyết định"), ("decision_date", "Ngày ký quyết định"),
-            ("first_license_no", "Số GPLX đầu"), ("last_license_no", "Số GPLX cuối"),
+            ("decision_number", "Số quyết định:"), ("decision_date", "Ngày ký quyết định:"),
+            ("first_license_no", "Số GPLX đầu:"), ("last_license_no", "Số GPLX cuối:"),
         ], start=6):
             caption = ctk.CTkLabel(self.card_a, text=label)
             caption.grid(row=row, column=0, sticky="w", padx=8, pady=4)
@@ -110,8 +118,8 @@ class ReviewPanel(ctk.CTkFrame):
         self.card_a.grid_columnconfigure(3, weight=1)
 
         # Card B: Rà soát dãy số & Nhận định
-        lbl_card_b = ctk.CTkLabel(self.scroll_form, text="RÀ SOÁT DÃY SỐ GPLX & NHẬN ĐỊNH", font=("Segoe UI", 12, "bold"))
-        lbl_card_b.pack(anchor="w", pady=(10, 2))
+        self.lbl_card_b = ctk.CTkLabel(self.scroll_form, text="RÀ SOÁT DÃY SỐ GPLX & NHẬN ĐỊNH", font=("Segoe UI", 12, "bold"))
+        self.lbl_card_b.pack(anchor="w", pady=(10, 2))
 
         self.card_b = ctk.CTkFrame(self.scroll_form, corner_radius=6)
         self.card_b.pack(fill="x", pady=2)
@@ -150,10 +158,10 @@ class ReviewPanel(ctk.CTkFrame):
         self.grid_frame.pack(fill="both", expand=True, pady=2)
 
         # 3. Bottom Action Bar
-        self.bottom_bar = ctk.CTkFrame(self, height=55, fg_color=("gray85", "gray20"))
+        self.bottom_bar = ctk.CTkFrame(self, height=75, fg_color=("gray85", "gray20"))
         self.bottom_bar.pack(fill="x", padx=6, pady=(4, 6))
 
-        # Initially disabled until OCR data is loaded
+        # Confirmation button
         self.btn_confirm = ctk.CTkButton(
             self.bottom_bar,
             text="✔ XÁC NHẬN: ĐỔI TÊN PDF & XUẤT EXCEL & CẬP NHẬT TỔNG HỢP",
@@ -164,7 +172,24 @@ class ReviewPanel(ctk.CTkFrame):
             height=38,
             command=self._handle_confirm
         )
-        self.btn_confirm.pack(fill="x", padx=10, pady=8)
+        self.btn_confirm.pack(fill="x", padx=10, pady=(6, 3))
+
+        # Skip / Next button for folder review mode
+        self.btn_skip = ctk.CTkButton(
+            self.bottom_bar,
+            text="⏭️ Bỏ qua / File tiếp theo",
+            font=("Segoe UI", 12, "bold"),
+            fg_color=("#4A5568", "#2D3748"),
+            hover_color="#1A202C",
+            height=30,
+            command=self._handle_skip
+        )
+        self.btn_skip.pack(fill="x", padx=10, pady=(2, 6))
+        self.btn_skip.pack_forget()
+
+    def _handle_skip(self):
+        if self.on_skip_callback:
+            self.on_skip_callback()
 
     def load_data(self, dossier_data: Dict[str, Any]):
         self.current_data = None
@@ -222,13 +247,37 @@ class ReviewPanel(ctk.CTkFrame):
         self._show_table_summary(cover)
 
         if dossier_data.get("rename_only"):
+            self.lbl_card_a.configure(text="THÔNG TIN ĐẶT TÊN FILE (QUY TẮC LƯU TRỮ)")
+            self.lbl_book_type.grid_remove()
+            self.txt_book_type.grid_remove()
+            self.lbl_hang_khoa.grid_remove()
+            self.frame_hang_khoa.grid_remove()
+            self.lbl_box.grid_remove()
+            self.txt_box.grid_remove()
+            self.lbl_box_number.grid_remove()
+            self.txt_box_number.grid_remove()
+            self.lbl_card_b.pack_forget()
+            self.card_b.pack_forget()
             self.lbl_card_c.pack_forget()
             self.grid_frame.pack_forget()
             self._clear_grid()
+            self.btn_skip.pack(fill="x", padx=10, pady=(2, 6))
         else:
+            self.lbl_card_a.configure(text="THÔNG TIN BÌA SỔ & VỊ TRÍ HỒ SƠ")
+            self.lbl_book_type.grid()
+            self.txt_book_type.grid()
+            self.lbl_hang_khoa.grid()
+            self.frame_hang_khoa.grid()
+            self.lbl_box.grid()
+            self.txt_box.grid()
+            self.lbl_box_number.grid()
+            self.txt_box_number.grid()
+            self.lbl_card_b.pack(anchor="w", pady=(10, 2))
+            self.card_b.pack(fill="x", pady=2)
             self.lbl_card_c.pack(anchor="w", pady=(10, 2))
             self.grid_frame.pack(fill="both", expand=True, pady=2)
             self._populate_grid(dossier_data.get("citizens", []))
+            self.btn_skip.pack_forget()
 
         self.current_data = dossier_data
         self._refresh_naming()
@@ -341,7 +390,7 @@ class ReviewPanel(ctk.CTkFrame):
         else:
             self.btn_metadata_page.pack_forget()
         self.btn_confirm.configure(
-            text="XÁC NHẬN LƯU PDF VÀ SỔ TỔNG HỢP" if rename_only else "✔ XÁC NHẬN: ĐỔI TÊN PDF & XUẤT EXCEL & CẬP NHẬT TỔNG HỢP",
+            text="💾 XÁC NHẬN ĐỔI TÊN (TẠO BẢN SAO MỚI)" if rename_only else "✔ XÁC NHẬN: ĐỔI TÊN PDF & XUẤT EXCEL & CẬP NHẬT TỔNG HỢP",
             state="disabled" if proposal.errors or needs_table else "normal",
             fg_color="gray50" if proposal.errors or needs_table else "#1E7E34",
         )
@@ -355,6 +404,7 @@ class ReviewPanel(ctk.CTkFrame):
         if saving:
             self.scroll_form.pack_forget()
             self.btn_confirm.configure(text="Đang lưu PDF và sổ tổng hợp…", state="disabled", fg_color="gray50")
+            self.btn_skip.pack_forget()
         else:
             self._show_form()
             self._refresh_naming(update_filename=False)
@@ -368,6 +418,7 @@ class ReviewPanel(ctk.CTkFrame):
         self.btn_metadata_page.pack_forget()
         self.cmb_tables.grid_remove()
         self.btn_table_page.grid_remove()
+        self.btn_skip.pack_forget()
         self.scroll_form.pack_forget()
         self.btn_confirm.configure(text="XÁC NHẬN", state="disabled", fg_color="gray50")
 
@@ -455,35 +506,38 @@ class ReviewPanel(ctk.CTkFrame):
             messagebox.showwarning("Tên file không hợp lệ", "Nhập tên file hợp lệ cho Windows và bỏ phần đuôi .pdf.")
             return
 
+        rename_only = self.current_data.get("rename_only", False)
         cover = {**self.current_data["cover_meta"], **fields}
         cover["province_name"] = self.province_options[self.cmb_province.get()]["name"]
         cover["dossier_group"] = proposal.group
-        cover["book_type"] = self.txt_book_type.get().strip()
-        cover["license_class"] = self.txt_hang.get().strip()
-        cover["course"] = self.txt_khoa.get().strip()
-        cover["box"] = self.txt_box.get().strip()
-        cover["box_number"] = self.txt_box_number.get().strip()
-        cover["status_note"] = self.opt_status_note.get().strip()
-        cover["license_sequence"] = self.txt_seq_summary.get().strip()
-        count = self.txt_total_gplx.get().strip()
-        if count and not (len(count) <= 12 and count.isascii() and count.isdecimal()):
-            messagebox.showwarning("Số lượng không hợp lệ", "Nhập tổng số GPLX bằng số nguyên không âm.")
-            return
-        cover["total_licenses"] = int(count) if count else None
+        if not rename_only:
+            cover["book_type"] = self.txt_book_type.get().strip()
+            cover["license_class"] = self.txt_hang.get().strip()
+            cover["course"] = self.txt_khoa.get().strip()
+            cover["box"] = self.txt_box.get().strip()
+            cover["box_number"] = self.txt_box_number.get().strip()
+            cover["status_note"] = self.opt_status_note.get().strip()
+            cover["license_sequence"] = self.txt_seq_summary.get().strip()
+            count = self.txt_total_gplx.get().strip()
+            if count and not (len(count) <= 12 and count.isascii() and count.isdecimal()):
+                messagebox.showwarning("Số lượng không hợp lệ", "Nhập tổng số GPLX bằng số nguyên không âm.")
+                return
+            cover["total_licenses"] = int(count) if count else None
 
         # Harvest citizens
         updated_citizens = []
-        for idx, item in enumerate(self.citizen_entries, start=1):
-            stt_val = item["stt"].get().strip()
-            updated_citizens.append({
-                "stt": int(stt_val) if stt_val.isdigit() else idx,
-                "full_name": item["full_name"].get().strip(),
-                "birth_year": item["birth_year"].get().strip(),
-                "address": item["address"].get().strip(),
-                "license_number": item["license_number"].get().strip(),
-                "nationality": item["nationality"],
-                "page_number": item["page_number"]
-            })
+        if not rename_only:
+            for idx, item in enumerate(self.citizen_entries, start=1):
+                stt_val = item["stt"].get().strip()
+                updated_citizens.append({
+                    "stt": int(stt_val) if stt_val.isdigit() else idx,
+                    "full_name": item["full_name"].get().strip(),
+                    "birth_year": item["birth_year"].get().strip(),
+                    "address": item["address"].get().strip(),
+                    "license_number": item["license_number"].get().strip(),
+                    "nationality": item["nationality"],
+                    "page_number": item["page_number"]
+                })
 
         self.on_confirm_callback(
             original_path=self.current_data["original_path"],
